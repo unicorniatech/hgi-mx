@@ -1,0 +1,9 @@
+{
+  "name": "hgi-mx",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "echo TODO"
+  },
+  "devDependencies": {},
+  "dependencies": {}
+}
