@@ -57,16 +57,6 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-/**
- * Runtime check to determine whether a value is an array of finite numbers.
- *
- * @param value - Unknown value to check.
- * @returns True if `value` is a `number[]` with all entries finite; otherwise false.
- */
-function isFiniteNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every(isFiniteNumber);
-}
-
 const EVA_TIMESTAMP_MIN_MS = 0;
 const EVA_TIMESTAMP_MAX_MS = 8_640_000_000_000_000;
 const EVA_DURATION_MIN_MS = 0;
@@ -316,11 +306,14 @@ export function isValidEVAInput(value: unknown): value is EVAInput {
 export function isValidProsodyFeatures(value: unknown): value is ProsodyFeatures {
   if (!isRecord(value)) return false;
 
+  const rhythm = validateRhythmFeatures(value.rhythm_features);
+  if (!rhythm.ok) return false;
+
   return (
     isFiniteNumber(value.pitch_mean) &&
     isFiniteNumber(value.pitch_variance) &&
     isFiniteNumber(value.energy_mean) &&
-    isFiniteNumberArray(value.rhythm_features)
+    rhythm.ok
   );
 }
 
@@ -333,11 +326,14 @@ export function isValidProsodyFeatures(value: unknown): value is ProsodyFeatures
 export function isValidEVAVector(value: unknown): value is EVAVector {
   if (!isRecord(value)) return false;
 
+  const rhythm = validateRhythmFeatures(value.rhythm_features);
+  if (!rhythm.ok) return false;
+
   return (
     isFiniteNumber(value.pitch_mean) &&
     isFiniteNumber(value.pitch_variance) &&
     isFiniteNumber(value.energy_mean) &&
-    isFiniteNumberArray(value.rhythm_features)
+    rhythm.ok
   );
 }
 
@@ -348,7 +344,7 @@ export async function extract_prosody_features(input: EVAInput): Promise<Prosody
   // TODO(HGI): Implement prosodic feature extraction per Canon
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.1 EVA)
   void input;
-  throw new Error("Not implemented");
+  throw createEVANotImplementedError("extract_prosody_features");
 }
 
 export async function eva_vectorize(input: EVAInput): Promise<EVAVector> {
