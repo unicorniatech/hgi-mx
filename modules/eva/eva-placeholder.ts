@@ -131,6 +131,7 @@ export enum EVAErrorCode {
   INVALID_VECTOR = "INVALID_VECTOR",
   INVALID_PROSODY = "INVALID_PROSODY",
   INVALID_RHYTHM = "INVALID_RHYTHM",
+  PIPELINE_MISMATCH = "PIPELINE_MISMATCH",
   VALIDATION_ERROR = "VALIDATION_ERROR",
   NOT_IMPLEMENTED = "NOT_IMPLEMENTED",
 }
@@ -203,6 +204,22 @@ export function createEVANotImplementedError(
   timestamp: number = Date.now(),
 ): EVAError {
   return new EVAError(EVAErrorCode.NOT_IMPLEMENTED, `${feature} is not implemented`, timestamp);
+}
+
+/**
+ * Create a standardized pipeline mismatch error.
+ *
+ * Use this when the EVA pipeline entry receives a payload that is structurally
+ * incompatible with EVA expectations.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.1 EVA)
+ *
+ * @param details - Human-readable mismatch detail.
+ * @param timestamp - Unix epoch milliseconds. Defaults to `Date.now()`.
+ * @returns An {@link EVAError} with `code = PIPELINE_MISMATCH`.
+ */
+export function createEVAPipelineMismatchError(details: string, timestamp: number = Date.now()): EVAError {
+  return new EVAError(EVAErrorCode.PIPELINE_MISMATCH, details, timestamp);
 }
 
 /**
@@ -337,16 +354,62 @@ export function isValidEVAVector(value: unknown): value is EVAVector {
   );
 }
 
+/**
+ * Extract prosodic features from EVA metadata.
+ *
+ * This is a structure-only placeholder:
+ * - Normalizes the input using {@link normalizeEVAInput}
+ * - Validates the normalized input using {@link isValidEVAInput}
+ * - Returns deterministic fixed {@link ProsodyFeatures}
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.1 EVA)
+ *
+ * @param input - Metadata-only EVA input.
+ * @returns Deterministic prosody features.
+ * @throws {EVAError} When the input is structurally invalid.
+ */
 export async function extract_prosody_features(input: EVAInput): Promise<ProsodyFeatures> {
   // TODO(HGI): NO AUDIO PROCESSING
   // TODO(HGI): NO BIOMETRIC DATA
   // TODO(HGI): PLACEHOLDER ONLY
   // TODO(HGI): Implement prosodic feature extraction per Canon
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.1 EVA)
-  void input;
-  throw createEVANotImplementedError("extract_prosody_features");
+  const normalized = normalizeEVAInput(input);
+
+  if (!isValidEVAInput(normalized)) {
+    throw createEVAInvalidInputError(['Invalid EVAInput for prosody feature extraction.']);
+  }
+
+  const energyMean = Math.min(1, Math.max(0, normalized.duration_ms / EVA_DURATION_MAX_MS));
+
+  const features: ProsodyFeatures = {
+    pitch_mean: 0.5,
+    pitch_variance: 0,
+    energy_mean: energyMean,
+    rhythm_features: new Array(8).fill(0.5),
+  };
+
+  if (!isValidProsodyFeatures(features)) {
+    throw createEVAValidationError(EVAErrorCode.INVALID_PROSODY, ['ProsodyFeatures failed structural validation.']);
+  }
+
+  return features;
 }
 
+/**
+ * Vectorize EVA prosody features into an {@link EVAVector}.
+ *
+ * Structure-only wiring:
+ * - Calls {@link extract_prosody_features}
+ * - Validates the returned prosody payload using {@link validateProsodyFeaturesShape}
+ * - Identity-maps the prosody fields onto the EVA vector structure
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.1 EVA)
+ *
+ * @param input - Metadata-only EVA input.
+ * @returns A validated {@link EVAVector}.
+ * @throws {EVAError} When prosody validation fails.
+ */
 export async function eva_vectorize(input: EVAInput): Promise<EVAVector> {
   // TODO(HGI): NO AUDIO PROCESSING
   // TODO(HGI): NO BIOMETRIC DATA
@@ -354,10 +417,49 @@ export async function eva_vectorize(input: EVAInput): Promise<EVAVector> {
   // TODO(HGI): Vectorize EVA prosody features (metadata-derived only)
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.1 EVA)
   const prosody = await extract_prosody_features(input);
+
+  const validation = validateProsodyFeaturesShape(prosody);
+  if (!validation.ok) {
+    throw createEVAValidationError(EVAErrorCode.INVALID_PROSODY, validation.errors);
+  }
+
   return {
     pitch_mean: prosody.pitch_mean,
     pitch_variance: prosody.pitch_variance,
     energy_mean: prosody.energy_mean,
     rhythm_features: prosody.rhythm_features,
   };
+}
+
+/**
+ * Pipeline adapter entry for EVA.
+ *
+ * This is a structure-only adapter:
+ * - Validates an unknown input payload using {@link isValidEVAInput}
+ * - Normalizes numeric metadata fields using {@link normalizeEVAInput}
+ * - Calls {@link eva_vectorize} to produce an {@link EVAVector}
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.1 EVA)
+ *
+ * @param input - Unknown upstream pipeline payload.
+ * @returns A validated {@link EVAVector}.
+ * @throws {EVAError} When input or output validation fails.
+ */
+export async function eva_pipeline_entry(input: unknown): Promise<EVAVector> {
+  if (!isValidEVAInput(input)) {
+    throw createEVAPipelineMismatchError('Invalid EVAInput for EVA pipeline entry.');
+  }
+
+  const normalized = normalizeEVAInput(input);
+  if (!isValidEVAInput(normalized)) {
+    throw createEVAInvalidInputError(['Normalized EVAInput failed structural validation.']);
+  }
+
+  const vector = await eva_vectorize(normalized);
+
+  if (!isValidEVAVector(vector)) {
+    throw createEVAValidationError(EVAErrorCode.INVALID_VECTOR, ['EVA pipeline entry produced an invalid EVAVector.']);
+  }
+
+  return vector;
 }

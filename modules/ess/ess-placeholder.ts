@@ -7,13 +7,16 @@
 // - Create tasks that reference `/docs/core/hgi-core-v0.2-outline.md` (Section 4: ESS).
 // - Keep changes atomic and versionable.
 
-import { EVAVector } from '../eva/eva-placeholder';
+import { EVAVector, isValidEVAVector, validateEVAVectorShape } from '../eva/eva-placeholder';
 
 export enum ESSErrorCode {
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   INVALID_STRUCTURE = 'INVALID_STRUCTURE',
   INVALID_EMOTION = 'INVALID_EMOTION',
   RANGE_VIOLATION = 'RANGE_VIOLATION',
+  CORE_STUB_FAIL = 'CORE_STUB_FAIL',
+  SYNTHESIS_MISMATCH = 'SYNTHESIS_MISMATCH',
+  PIPELINE_INCOMPATIBLE = 'PIPELINE_INCOMPATIBLE',
 }
 
 /**
@@ -54,6 +57,49 @@ export function createESSValidationError(
   cause?: unknown,
 ): ESSError {
   return new ESSError(code, message, { details, cause });
+}
+
+/**
+ * Creates an {@link ESSError} representing a deterministic core stub failure.
+ *
+ * Use this when a structure-only placeholder is expected to return deterministic
+ * data but fails internal structural invariants.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
+ */
+export function createESSStubError(details: unknown, cause?: unknown): ESSError {
+  return createESSValidationError(
+    ESSErrorCode.CORE_STUB_FAIL,
+    'ESS core stub failed structural invariants.',
+    details,
+    cause,
+  );
+}
+
+/**
+ * Creates an {@link ESSError} representing a synthesis mismatch.
+ *
+ * Use this when ESS intent synthesis fails structural invariants for the
+ * expected handoff output.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
+ */
+export function createESSSynthesisError(details: unknown, cause?: unknown): ESSError {
+  return createESSValidationError(
+    ESSErrorCode.SYNTHESIS_MISMATCH,
+    'ESS synthesis output failed structural invariants.',
+    details,
+    cause,
+  );
+}
+
+/**
+ * Creates an {@link ESSError} representing an invalid pipeline input payload.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
+ */
+export function createESSInvalidInputError(message: string, details?: unknown, cause?: unknown): ESSError {
+  return createESSValidationError(ESSErrorCode.PIPELINE_INCOMPATIBLE, message, details, cause);
 }
 
 /**
@@ -307,20 +353,144 @@ export function isValidESSIntent(value: unknown): value is ESSIntent {
   );
 }
 
+/**
+ * Compute deterministic emotion weights from an {@link EVAVector}.
+ *
+ * Structure-only placeholder:
+ * - Validates the input vector using {@link validateEVAVectorShape}
+ * - Returns fixed weights with a primary weight derived from `energy_mean`
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
+ *
+ * @param vector - Upstream EVA vector.
+ * @returns Deterministic {@link EmotionWeights}.
+ * @throws {ESSError} When vector validation fails.
+ */
 export async function compute_emotion_weights(vector: EVAVector): Promise<EmotionWeights> {
   // TODO(HGI): STRUCTURE ONLY
   // TODO(HGI): NO LOGIC IMPLEMENTATION
   // TODO(HGI): Compute emotion weighting from EVA vector per Canon
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
-  void vector;
-  throw new Error("Not implemented");
+  const validation = validateEVAVectorShape(vector);
+  if (!validation.ok) {
+    throw createESSValidationError(
+      ESSErrorCode.VALIDATION_ERROR,
+      'Invalid EVAVector input for compute_emotion_weights.',
+      { errors: validation.errors },
+    );
+  }
+
+  const primary = clampIntensity(vector.energy_mean);
+
+  const weights: EmotionWeights = {
+    primary_emotion_weight: primary,
+    secondary_emotion_weights: {
+      joy: 0.2,
+      sadness: 0.1,
+    },
+    intensity_weight: clampIntensity(primary),
+    valence_weight: 0.5,
+  };
+
+  const normalized = normalizeEmotionWeights(weights);
+
+  if (!isValidEmotionWeights(normalized)) {
+    throw createESSStubError({ weights: normalized });
+  }
+
+  return normalized;
 }
 
+/**
+ * Synthesize an {@link ESSIntent} from an {@link EVAVector}.
+ *
+ * Structure-only wiring:
+ * - Calls {@link compute_emotion_weights}
+ * - Validates the returned {@link EmotionWeights}
+ * - Assembles a deterministic {@link ESSEmotion} scaffold and validates it
+ * - Returns an {@link ESSIntent} scaffold
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
+ *
+ * @param evaVector - Upstream EVA vector.
+ * @returns A deterministic {@link ESSIntent} scaffold.
+ * @throws {ESSError} When structural validation fails.
+ */
 export async function ess_synthesize(evaVector: EVAVector): Promise<ESSIntent> {
   // TODO(HGI): STRUCTURE ONLY
   // TODO(HGI): NO LOGIC IMPLEMENTATION
   // TODO(HGI): Implement emotion → intention synthesis
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
-  void evaVector;
-  throw new Error("Not implemented");
+  const weights = await compute_emotion_weights(evaVector);
+
+  if (!isValidEmotionWeights(weights)) {
+    throw createESSStubError({ weights });
+  }
+
+  const emotional_context: ESSEmotion = {
+    primary_emotion: 'joy',
+    secondary_emotions: ['curiosity', 'calm'],
+    intensity: clampIntensity(weights.primary_emotion_weight),
+    valence: clampValence(0.5),
+  };
+
+  if (!isValidESSEmotion(emotional_context)) {
+    throw createESSSynthesisError({ emotional_context });
+  }
+
+  if (emotional_context.primary_emotion.trim().length === 0) {
+    throw createESSInvalidEmotionError(emotional_context.primary_emotion);
+  }
+
+  const intent: ESSIntent = {
+    semantic_core: 'semantic_core_alpha',
+    emotional_context,
+    clarity_score: 1.0,
+  };
+
+  if (!isValidESSIntent(intent)) {
+    throw createESSSynthesisError({ intent });
+  }
+
+  return intent;
+}
+
+/**
+ * Pipeline adapter entry for ESS.
+ *
+ * Structure-only adapter:
+ * - Validates an unknown pipeline payload as an {@link EVAVector}
+ * - Normalizes by cloning the validated structure
+ * - Calls {@link ess_synthesize}
+ * - Validates the returned {@link ESSIntent}
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ * - /docs/core/hgi-core-v0.2-outline.md (Section II.2.2 ESS)
+ *
+ * @param input - Unknown upstream pipeline payload.
+ * @returns A validated {@link ESSIntent}.
+ * @throws {ESSError} When input or output validation fails.
+ */
+export async function ess_pipeline_entry(input: unknown): Promise<ESSIntent> {
+  if (!isValidEVAVector(input)) {
+    const shape = validateEVAVectorShape(input);
+    const errors = shape.ok ? ['Invalid EVAVector payload.'] : shape.errors;
+    throw createESSInvalidInputError('Invalid EVAVector input for ESS pipeline entry.', { errors });
+  }
+
+  const normalized: EVAVector = {
+    pitch_mean: input.pitch_mean,
+    pitch_variance: input.pitch_variance,
+    energy_mean: input.energy_mean,
+    rhythm_features: [...input.rhythm_features],
+  };
+
+  const intent = await ess_synthesize(normalized);
+
+  if (!isValidESSIntent(intent)) {
+    throw createESSSynthesisError({ intent });
+  }
+
+  return intent;
 }

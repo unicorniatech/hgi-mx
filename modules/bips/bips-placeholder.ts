@@ -9,7 +9,8 @@
 // - Keep changes atomic and versionable.
 
 import type { ESSIntent } from '../ess/ess-placeholder';
-import { HEVScore, isValidHEVScore } from '../hev/hev-placeholder';
+import { HEVScore, isValidHEVScore, normalizeHEVScore } from '../hev/hev-placeholder';
+import { isValidMOLIEMap, MOLIEMap } from '../molie/molie-placeholder';
 
 /**
  * Narrow an `unknown` value to a plain object record.
@@ -71,6 +72,9 @@ export enum BIPSErrorCode {
   SIMILARITY_VIOLATION = 'SIMILARITY_VIOLATION',
   INVALID_SHARD_ID = 'INVALID_SHARD_ID',
   INVALID_HASH_CONTEXTUAL = 'INVALID_HASH_CONTEXTUAL',
+  ENVELOPE_STUB_FAIL = 'ENVELOPE_STUB_FAIL',
+  SHARD_HANDOFF_MISMATCH = 'SHARD_HANDOFF_MISMATCH',
+  PIPELINE_INCOMPATIBLE = 'PIPELINE_INCOMPATIBLE',
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   INVALID_STRUCTURE = 'INVALID_STRUCTURE',
 }
@@ -131,6 +135,44 @@ export function createBIPSInvalidIDError(
   const code =
     idType === 'shard_id' ? BIPSErrorCode.INVALID_SHARD_ID : BIPSErrorCode.INVALID_HASH_CONTEXTUAL;
   return new BIPSError(code, `Invalid ${idType}: ${id}`);
+}
+
+/**
+ * Factory for a deterministic stub envelope failure.
+ *
+ * This should be used when a structure-only placeholder returns an envelope
+ * that fails structural or threshold validation.
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section 5: BIPS)
+ * - /docs/protocols/bips-outline.md (Section 2: Proceso de Irreversibilidad)
+ *
+ * @param message - Human-readable error detail.
+ * @returns A {@link BIPSError} with code {@link BIPSErrorCode.ENVELOPE_STUB_FAIL}.
+ */
+export function createBIPSEnvelopeStubError(message: string): BIPSError {
+  return new BIPSError(BIPSErrorCode.ENVELOPE_STUB_FAIL, message);
+}
+
+/**
+ * Factory for a BIPS handoff/pipeline mismatch error.
+ *
+ * Use this when an upstream pipeline payload is structurally incompatible with
+ * BIPS expectations, or when an internal BIPS handoff invariant fails.
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ * - /docs/core/hgi-core-v0.2-outline.md (Section 5: BIPS)
+ *
+ * @param code - The specific mismatch code.
+ * @param message - Human-readable error detail.
+ * @returns A {@link BIPSError} with the provided mismatch code.
+ */
+export function createBIPSHandoffError(
+  code: BIPSErrorCode.SHARD_HANDOFF_MISMATCH | BIPSErrorCode.PIPELINE_INCOMPATIBLE,
+  message: string,
+): BIPSError {
+  return new BIPSError(code, message);
 }
 
 const BIPS_SHARD_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
@@ -322,14 +364,182 @@ export async function compute_similarity_score(shard: EmoShard): Promise<number>
   throw new Error("Not implemented");
 }
 
-export async function bips_generate(shard: EmoShard): Promise<IrreversibilityEnvelope> {
+export async function bips_generate(molieMap: MOLIEMap, hevScore: HEVScore): Promise<IrreversibilityEnvelope> {
   // TODO(HGI): STRUCTURE ONLY
   // TODO(HGI): NO HASHING LOGIC
   // TODO(HGI): NO BIOMETRIC OPERATIONS
   // TODO(HGI): Implement irreversibility transformation + envelope generation
   // Reference: /docs/protocols/bips-outline.md (Section 2: Proceso de Irreversibilidad)
-  void shard;
-  throw new Error("Not implemented");
+  if (!isValidMOLIEMap(molieMap)) {
+    throw new BIPSError(BIPSErrorCode.INVALID_STRUCTURE, 'Invalid MOLIEMap input for BIPS.');
+  }
+
+  if (!isValidHEVScore(hevScore)) {
+    throw new BIPSError(BIPSErrorCode.INVALID_STRUCTURE, 'Invalid HEVScore input for BIPS.');
+  }
+
+  const normalizedHEV = normalizeHEVScore(hevScore);
+  void normalizedHEV;
+
+  const envelope: IrreversibilityEnvelope = {
+    shard_id: 'shard_alpha',
+    hash_contextual: '0'.repeat(64),
+    entropy_proof: 0.5,
+    similarity_score: 0.1,
+  };
+
+  if (!isValidShardID(envelope.shard_id)) {
+    throw createBIPSInvalidIDError('shard_id', envelope.shard_id);
+  }
+
+  if (!isValidHashContextual(envelope.hash_contextual)) {
+    throw createBIPSInvalidIDError('hash_contextual', envelope.hash_contextual);
+  }
+
+  const threshold = validateSimilarityThreshold(envelope.similarity_score);
+  if (!threshold.ok) {
+    throw createBIPSSimilarityError(envelope.similarity_score);
+  }
+
+  if (!isValidIrreversibilityEnvelope(envelope)) {
+    throw createBIPSEnvelopeStubError('Generated IrreversibilityEnvelope failed structural validation.');
+  }
+
+  return envelope;
+}
+
+/**
+ * Assemble a deterministic {@link EmoShard} using the internal BIPS handoff.
+ *
+ * This function performs structural wiring only:
+ * - Calls {@link bips_generate} to obtain an {@link IrreversibilityEnvelope}
+ * - Assembles a fixed {@link EmoShard} payload with that envelope
+ * - Validates shard IDs and similarity threshold
+ *
+ * No similarity computation or hashing is performed.
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section 5: BIPS)
+ * - /docs/protocols/bips-outline.md (Section 2: Proceso de Irreversibilidad)
+ *
+ * @param molieMap - Upstream MOLIE output.
+ * @param hevScore - Upstream HEV score.
+ * @returns A validated {@link EmoShard} with a populated BIPS envelope.
+ * @throws {BIPSError} When structural validation fails.
+ */
+export async function bips_handoff(molieMap: MOLIEMap, hevScore: HEVScore): Promise<EmoShard> {
+  const envelope = await bips_generate(molieMap, hevScore);
+
+  if (!isValidShardID(envelope.shard_id)) {
+    throw createBIPSInvalidIDError('shard_id', envelope.shard_id);
+  }
+
+  if (!isValidHashContextual(envelope.hash_contextual)) {
+    throw createBIPSInvalidIDError('hash_contextual', envelope.hash_contextual);
+  }
+
+  if (!isWithinSimilarityThreshold(envelope.similarity_score)) {
+    throw createBIPSSimilarityError(envelope.similarity_score);
+  }
+
+  const shard: EmoShard = {
+    emotion_vector: [0.25, 0.5, 0.75],
+    intention_core: 'intention_alpha',
+    ethical_score: normalizeHEVScore(hevScore),
+    bips_envelope: envelope,
+    timestamp: 0,
+  };
+
+  const idCheck = validateEmoShardIDs(shard);
+  if (!idCheck.ok) {
+    throw createBIPSHandoffError(
+      BIPSErrorCode.SHARD_HANDOFF_MISMATCH,
+      'EmoShard embedded envelope IDs failed validation.',
+    );
+  }
+
+  if (!isValidEmoShard(shard)) {
+    throw new BIPSError(BIPSErrorCode.INVALID_STRUCTURE, 'Generated EmoShard failed structural validation.');
+  }
+
+  return shard;
+}
+
+/**
+ * Pipeline adapter entry for BIPS.
+ *
+ * Validates and normalizes the upstream handoff payload and then executes the
+ * BIPS envelope generation step.
+ *
+ * Expected input shape:
+ * - `{ molieMap: MOLIEMap, hevScore: HEVScore }`
+ *
+ * Notes:
+ * - Structure/validation only.
+ * - Does not implement similarity computation, hashing, or biometrics.
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ * - /docs/core/hgi-core-v0.2-outline.md (Section 5: BIPS)
+ * - /docs/protocols/bips-outline.md (Section 2: Proceso de Irreversibilidad)
+ *
+ * @param input - Unknown upstream handoff payload.
+ * @returns A validated {@link IrreversibilityEnvelope}.
+ * @throws {BIPSError} When input or output validation fails.
+ */
+export async function bips_pipeline_entry(input: unknown): Promise<IrreversibilityEnvelope> {
+  if (!isRecord(input)) {
+    throw createBIPSHandoffError(
+      BIPSErrorCode.PIPELINE_INCOMPATIBLE,
+      'Invalid BIPS pipeline input: expected a record.',
+    );
+  }
+
+  const molieMap = input.molieMap;
+  const hevScore = input.hevScore;
+
+  if (!isValidMOLIEMap(molieMap)) {
+    throw createBIPSHandoffError(
+      BIPSErrorCode.PIPELINE_INCOMPATIBLE,
+      'Invalid MOLIEMap input for BIPS pipeline entry.',
+    );
+  }
+
+  if (!isValidHEVScore(hevScore)) {
+    throw createBIPSHandoffError(
+      BIPSErrorCode.PIPELINE_INCOMPATIBLE,
+      'Invalid HEVScore input for BIPS pipeline entry.',
+    );
+  }
+
+  const normalizedHEV = normalizeHEVScore(hevScore);
+  if (!isValidHEVScore(normalizedHEV)) {
+    throw createBIPSHandoffError(
+      BIPSErrorCode.PIPELINE_INCOMPATIBLE,
+      'Normalized HEVScore failed structural validation.',
+    );
+  }
+
+  const envelope = await bips_generate(molieMap, normalizedHEV);
+
+  if (!isValidIrreversibilityEnvelope(envelope)) {
+    throw createBIPSEnvelopeStubError('BIPS pipeline entry produced an invalid envelope structure.');
+  }
+
+  if (!isValidShardID(envelope.shard_id)) {
+    throw createBIPSInvalidIDError('shard_id', envelope.shard_id);
+  }
+
+  if (!isValidHashContextual(envelope.hash_contextual)) {
+    throw createBIPSInvalidIDError('hash_contextual', envelope.hash_contextual);
+  }
+
+  const threshold = validateSimilarityThreshold(envelope.similarity_score);
+  if (!threshold.ok) {
+    throw createBIPSSimilarityError(envelope.similarity_score);
+  }
+
+  return envelope;
 }
 
 export async function bips_validate(shard: EmoShard): Promise<boolean> {
@@ -338,8 +548,28 @@ export async function bips_validate(shard: EmoShard): Promise<boolean> {
   // TODO(HGI): NO BIOMETRIC OPERATIONS
   // TODO(HGI): Validate similarity_score < 0.15 threshold
   // Reference: /docs/protocols/bips-outline.md (Section 2: Proceso de Irreversibilidad)
-  void shard;
-  throw new Error("Not implemented");
+  if (!isValidEmoShard(shard)) {
+    throw new BIPSError(BIPSErrorCode.INVALID_STRUCTURE, 'Invalid EmoShard structure.');
+  }
+
+  const envelope = shard.bips_envelope;
+  if (envelope === null) {
+    throw new BIPSError(BIPSErrorCode.INVALID_STRUCTURE, 'EmoShard missing bips_envelope.');
+  }
+
+  if (!isValidShardID(envelope.shard_id)) {
+    throw createBIPSInvalidIDError('shard_id', envelope.shard_id);
+  }
+
+  if (!isValidHashContextual(envelope.hash_contextual)) {
+    throw createBIPSInvalidIDError('hash_contextual', envelope.hash_contextual);
+  }
+
+  if (!isWithinSimilarityThreshold(envelope.similarity_score)) {
+    throw createBIPSSimilarityError(envelope.similarity_score);
+  }
+
+  return true;
 }
 
 export {};

@@ -7,7 +7,7 @@
 // - Create tasks that reference `/docs/core/hgi-core-v0.2-outline.md`.
 // - Keep changes atomic and versionable.
 
-import { ESSIntent } from '../ess/ess-placeholder';
+import { ESSIntent, clampIntensity, clampValence, isValidESSIntent } from '../ess/ess-placeholder';
 
 /**
  * Narrow an `unknown` value to a plain object record.
@@ -69,6 +69,8 @@ export enum MOLIEErrorCode {
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   WEIGHT_VIOLATION = 'WEIGHT_VIOLATION',
   INVALID_STRUCTURE = 'INVALID_STRUCTURE',
+  CORE_STUB_FAIL = 'CORE_STUB_FAIL',
+  HANDOFF_MISMATCH = 'HANDOFF_MISMATCH',
 }
 
 /**
@@ -122,6 +124,35 @@ export function createMOLIEInvalidIDError(
   id: string,
 ): MOLIEError {
   return new MOLIEError(MOLIEErrorCode.INVALID_ID, `Invalid ${idType} id: ${id}`);
+}
+
+/**
+ * Factory for a MOLIE stub / placeholder failure.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
+ *
+ * @param feature - Name of the stubbed feature.
+ * @returns A {@link MOLIEError} with code {@link MOLIEErrorCode.CORE_STUB_FAIL}.
+ */
+export function createMOLIEStubError(feature: string): MOLIEError {
+  return new MOLIEError(MOLIEErrorCode.CORE_STUB_FAIL, `MOLIE stub failure: ${feature}`);
+}
+
+/**
+ * Factory for a MOLIE handoff mismatch error.
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ * - /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
+ *
+ * @param from - Source module name.
+ * @param to - Destination module name.
+ * @param details - Optional additional detail.
+ * @returns A {@link MOLIEError} with code {@link MOLIEErrorCode.HANDOFF_MISMATCH}.
+ */
+export function createMOLIEHandoffError(from: string, to: string, details?: string): MOLIEError {
+  const suffix = details ? ` (${details})` : '';
+  return new MOLIEError(MOLIEErrorCode.HANDOFF_MISMATCH, `MOLIE handoff mismatch: ${from} -> ${to}${suffix}`);
 }
 
 const MOLIE_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
@@ -252,6 +283,33 @@ export function validateNodeConnections(connections: string[]): MOLIEValidationR
 }
 
 /**
+ * Validate a semantic cluster's `node_ids` list.
+ *
+ * This performs structural validation only:
+ * - Each node id must be a valid node ID.
+ *
+ * @param nodeIds - Array of intention node IDs referenced by a semantic cluster.
+ * @returns A structured validation result.
+ */
+export function validateClusterNodeIDs(nodeIds: string[]): MOLIEValidationResult {
+  const errors: MOLIEValidationError[] = [];
+
+  for (let i = 0; i < nodeIds.length; i += 1) {
+    const id = nodeIds[i];
+    if (!isValidNodeID(id)) {
+      errors.push({
+        code: 'INVALID_NODE_ID',
+        message: 'Cluster node_id must be alphanumeric plus _- and 1-128 characters.',
+        index: i,
+        value: id,
+      });
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+/**
  * Runtime validator / type guard for {@link IntentionNode}.
  *
  * This guard validates only the structural shape of the node (types of fields).
@@ -310,6 +368,7 @@ export function isValidMOLIEMap(map: unknown): map is MOLIEMap {
     intentionNodes.every(isValidIntentionNode) &&
     Array.isArray(semanticClusters) &&
     semanticClusters.every(isValidSemanticCluster) &&
+    semanticClusters.every((cluster) => validateClusterNodeIDs(cluster.node_ids).ok) &&
     isStringArray(map.narrative_threads)
   );
 }
@@ -348,7 +407,46 @@ export async function extract_semantic_clusters(intent: ESSIntent): Promise<Sema
   // TODO(HGI): Extract semantic clusters from ESS intent
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
   void intent;
-  throw new Error("Not implemented");
+
+  const clusters: SemanticCluster[] = [
+    {
+      id: 'cluster_alpha',
+      node_ids: [],
+      cluster_weight: 0.5,
+    },
+    {
+      id: 'cluster_beta',
+      node_ids: [],
+      cluster_weight: 0.75,
+    },
+    {
+      id: 'cluster_gamma',
+      node_ids: [],
+      cluster_weight: 0.25,
+    },
+  ];
+
+  const normalized = clusters.map((cluster) => {
+    if (!isValidClusterID(cluster.id)) {
+      throw createMOLIEInvalidIDError('cluster', cluster.id);
+    }
+
+    const refs = validateClusterNodeIDs(cluster.node_ids);
+    if (!refs.ok) {
+      throw createMOLIEValidationError('SemanticCluster node_ids failed validation.');
+    }
+
+    const out = normalizeSemanticCluster({
+      ...cluster,
+      cluster_weight: clampClusterWeight(cluster.cluster_weight),
+    });
+    if (!isValidSemanticCluster(out)) {
+      throw createMOLIEValidationError('Normalized SemanticCluster failed structural validation.');
+    }
+    return out;
+  });
+
+  return normalized;
 }
 
 export async function molie_transform(essOutput: ESSIntent): Promise<MOLIEMap> {
@@ -357,7 +455,96 @@ export async function molie_transform(essOutput: ESSIntent): Promise<MOLIEMap> {
   // TODO(HGI): Implement deep semantic intention mapping
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
   void essOutput;
-  throw new Error("Not implemented");
+
+  const semantic_clusters = await extract_semantic_clusters(essOutput);
+
+  const intention_nodes: IntentionNode[] = [
+    {
+      id: 'node_alpha',
+      semantic_weight: 0.6,
+      emotional_anchor: 'anchor_alpha',
+      connections: ['node_beta'],
+    },
+    {
+      id: 'node_beta',
+      semantic_weight: 0.4,
+      emotional_anchor: 'anchor_beta',
+      connections: ['node_alpha'],
+    },
+  ];
+
+  const normalizedNodes = intention_nodes.map((node) => {
+    if (!isValidNodeID(node.id)) {
+      throw createMOLIEInvalidIDError('node', node.id);
+    }
+
+    const connectionsResult = validateNodeConnections(node.connections);
+    if (!connectionsResult.ok) {
+      throw createMOLIEValidationError('IntentionNode connections failed validation.');
+    }
+
+    const out = normalizeIntentionNode({
+      ...node,
+      semantic_weight: clampSemanticWeight(node.semantic_weight),
+    });
+
+    if (!isValidIntentionNode(out)) {
+      throw createMOLIEValidationError('Normalized IntentionNode failed structural validation.');
+    }
+
+    return out;
+  });
+
+  const narrative_threads: string[] = ['thread_alpha', 'thread_beta'];
+
+  const map: MOLIEMap = {
+    intention_nodes: normalizedNodes,
+    semantic_clusters,
+    narrative_threads,
+  };
+
+  if (!isValidMOLIEMap(map)) {
+    throw createMOLIEValidationError('MOLIEMap failed structural validation.');
+  }
+
+  return map;
+}
+
+/**
+ * Pipeline adapter for entering MOLIE from an unknown upstream payload.
+ *
+ * This function performs structural validation and normalization only:
+ * - Validates the incoming value is an {@link ESSIntent}
+ * - Creates a defensive copy of the intent structure (no semantic changes)
+ * - Invokes {@link molie_transform}
+ * - Validates the resulting {@link MOLIEMap}
+ *
+ * @param intent - Unknown upstream value expected to be an {@link ESSIntent}.
+ * @returns A validated {@link MOLIEMap}.
+ * @throws {MOLIEError} If the input or output fails structural validation.
+ */
+export async function molie_pipeline_entry(intent: unknown): Promise<MOLIEMap> {
+  if (!isValidESSIntent(intent)) {
+    throw createMOLIEValidationError('Invalid ESSIntent input for MOLIE pipeline entry.');
+  }
+
+  const normalizedIntent: ESSIntent = {
+    ...intent,
+    emotional_context: {
+      ...intent.emotional_context,
+      intensity: clampIntensity(intent.emotional_context.intensity),
+      valence: clampValence(intent.emotional_context.valence),
+      secondary_emotions: [...intent.emotional_context.secondary_emotions],
+    },
+  };
+
+  const map = await molie_transform(normalizedIntent);
+
+  if (!isValidMOLIEMap(map)) {
+    throw createMOLIEValidationError('MOLIE pipeline entry produced an invalid MOLIEMap.');
+  }
+
+  return map;
 }
 
 export {};
