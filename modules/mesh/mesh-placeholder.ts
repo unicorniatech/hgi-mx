@@ -8,8 +8,16 @@
 //   and `/docs/protocols/meshnet-outline.md`.
 // - Keep changes atomic and versionable.
 
-import type { EmoShard } from '../bips/bips-placeholder';
-import { isValidEmoShard } from '../bips/bips-placeholder';
+import type { EmoShard, IrreversibilityEnvelope } from '../bips/bips-placeholder';
+import {
+  isValidEmoShard,
+  isValidHashContextual,
+  isValidIrreversibilityEnvelope,
+  isValidShardID,
+  validateSimilarityThreshold,
+} from '../bips/bips-placeholder';
+import { EthicalGradient } from '../hev/hev-placeholder';
+import type { HEVScore } from '../hev/hev-placeholder';
 
 /**
  * Narrow an `unknown` value to a plain object record.
@@ -75,6 +83,9 @@ export function clampEthicalWeight(w: number): number {
 export enum MeshErrorCode {
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   INVALID_NODE = 'INVALID_NODE',
+  NODE_STUB_FAIL = 'NODE_STUB_FAIL',
+  GOSSIP_MISMATCH = 'GOSSIP_MISMATCH',
+  PIPELINE_INCOMPATIBLE = 'PIPELINE_INCOMPATIBLE',
   INVALID_STRUCTURE = 'INVALID_STRUCTURE',
 }
 
@@ -127,6 +138,38 @@ export function createMeshValidationError(message: string): MeshError {
 export function createMeshInvalidNodeError(reason: string, node?: unknown): MeshError {
   void node;
   return new MeshError(MeshErrorCode.INVALID_NODE, reason);
+}
+
+/**
+ * Factory for a deterministic mesh node stub failure.
+ *
+ * Use this when a structure-only placeholder is expected to return deterministic
+ * node data but fails internal structural invariants.
+ *
+ * Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
+ *
+ * @param details - Optional additional context.
+ * @returns A {@link MeshError} with code {@link MeshErrorCode.NODE_STUB_FAIL}.
+ */
+export function createMeshNodeStubError(details?: unknown): MeshError {
+  void details;
+  return new MeshError(MeshErrorCode.NODE_STUB_FAIL, 'Mesh node stub failed structural invariants.');
+}
+
+/**
+ * Factory for a gossip payload mismatch error.
+ *
+ * Use this when a structure-only gossip wiring path produces an invalid
+ * {@link GossipMessage} payload.
+ *
+ * Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
+ *
+ * @param details - Optional additional context.
+ * @returns A {@link MeshError} with code {@link MeshErrorCode.GOSSIP_MISMATCH}.
+ */
+export function createMeshGossipError(details?: unknown): MeshError {
+  void details;
+  return new MeshError(MeshErrorCode.GOSSIP_MISMATCH, 'Mesh gossip payload failed structural invariants.');
 }
 
 /**
@@ -308,6 +351,182 @@ export async function discover_peers(): Promise<MeshNodeInfo[]> {
   // TODO(HGI): Discover mesh peers
   // Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
   throw new Error("Not implemented");
+}
+
+/**
+ * Register a mesh node in the local node registry (structure-only stub).
+ *
+ * This function performs structural validation and deterministic registration only:
+ * - Validates the input node using {@link isValidMeshNodeInfo}
+ * - Returns a deterministic registration payload with clamped scores
+ *
+ * No networking, P2P handshake, routing, or persistence is implemented.
+ *
+ * Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
+ *
+ * @param node - Candidate node info to register.
+ * @returns A deterministic registered {@link MeshNodeInfo}.
+ * @throws {MeshError} When validation fails.
+ */
+export async function mesh_register_node(node: MeshNodeInfo): Promise<MeshNodeInfo> {
+  // TODO(HGI): STRUCTURE ONLY
+  // TODO(HGI): NO P2P LOGIC
+  // TODO(HGI): NO NETWORK OPERATIONS
+  // TODO(HGI): Register mesh node (local registry)
+  // Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
+  if (!isValidMeshNodeInfo(node)) {
+    throw createMeshInvalidNodeError('Invalid MeshNodeInfo input for mesh_register_node.', node);
+  }
+
+  if (typeof node.node_id !== 'string' || node.node_id.trim().length === 0) {
+    throw createMeshValidationError('mesh_register_node requires a non-empty node_id.');
+  }
+
+  const registered: MeshNodeInfo = {
+    ...node,
+    node_id: node.node_id,
+    reputation_score: clampReputationScore(0.5),
+    ethical_weight: clampEthicalWeight(0.8),
+  };
+
+  if (!isValidMeshNodeInfo(registered)) {
+    throw createMeshNodeStubError({ registered });
+  }
+
+  return registered;
+}
+
+/**
+ * Propagate a deterministic gossip message (structure-only wiring).
+ *
+ * This function performs structural wiring only:
+ * - Registers the sender node via {@link mesh_register_node}
+ * - Assembles a deterministic {@link GossipMessage} payload
+ * - Validates the embedded {@link EmoShard} and final gossip message
+ *
+ * No networking, P2P routing, or broadcast semantics are implemented.
+ *
+ * Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
+ *
+ * @param sender - Candidate sender node info.
+ * @returns A validated {@link GossipMessage} suitable for downstream broadcast.
+ * @throws {MeshError} When validation fails.
+ */
+export async function mesh_propagate_gossip(sender: MeshNodeInfo): Promise<GossipMessage> {
+  // TODO(HGI): STRUCTURE ONLY
+  // TODO(HGI): NO P2P LOGIC
+  // TODO(HGI): NO NETWORK OPERATIONS
+  // TODO(HGI): Propagate gossip message
+  // Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
+
+  const registeredSender = await mesh_register_node(sender);
+
+  if (!isValidMeshNodeInfo(registeredSender)) {
+    throw createMeshInvalidNodeError('mesh_propagate_gossip failed to register a valid sender node.', registeredSender);
+  }
+
+  const ethical_score: HEVScore = {
+    clarity_score: 0.8,
+    coherence_score: 0.7,
+    vulnerability_score: 0.2,
+    toxicity_score: 0.1,
+    ethical_color: EthicalGradient.GREEN_SAFE,
+  };
+
+  const shard: EmoShard = {
+    emotion_vector: [0.25, 0.5, 0.75],
+    intention_core: 'intention_alpha',
+    ethical_score,
+    bips_envelope: null,
+    timestamp: 0,
+  };
+
+  if (!isValidEmoShard(shard)) {
+    throw createMeshGossipError({ shard });
+  }
+
+  const message: GossipMessage = {
+    message_id: 'gossip_alpha',
+    sender_node_id: registeredSender.node_id,
+    shard_payload: shard,
+    timestamp: 0,
+  };
+
+  if (!isValidGossipMessage(message)) {
+    throw createMeshGossipError({ message });
+  }
+
+  return message;
+}
+
+/**
+ * Pipeline adapter entry for Mesh.
+ *
+ * Structure-only adapter:
+ * - Validates an upstream {@link IrreversibilityEnvelope} payload (from BIPS)
+ * - Registers a deterministic local node using {@link mesh_register_node}
+ * - Builds and validates a deterministic gossip payload using {@link mesh_propagate_gossip}
+ *
+ * No networking, P2P routing, or node discovery is implemented.
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ * - /docs/protocols/meshnet-outline.md (Section 3: Nodos)
+ *
+ * @param input - Unknown upstream pipeline payload.
+ * @returns A validated {@link MeshNodeInfo} representing the registered local node.
+ * @throws {MeshError} When input or output validation fails.
+ */
+export async function mesh_pipeline_entry(input: unknown): Promise<MeshNodeInfo> {
+  if (!isValidIrreversibilityEnvelope(input)) {
+    throw new MeshError(
+      MeshErrorCode.PIPELINE_INCOMPATIBLE,
+      'Invalid IrreversibilityEnvelope input for Mesh pipeline entry.',
+    );
+  }
+
+  const envelope: IrreversibilityEnvelope = {
+    shard_id: input.shard_id,
+    hash_contextual: input.hash_contextual,
+    entropy_proof: input.entropy_proof,
+    similarity_score: input.similarity_score,
+  };
+
+  if (!isValidShardID(envelope.shard_id)) {
+    throw createMeshValidationError(`Invalid shard_id in IrreversibilityEnvelope: ${envelope.shard_id}`);
+  }
+
+  if (!isValidHashContextual(envelope.hash_contextual)) {
+    throw createMeshValidationError(`Invalid hash_contextual in IrreversibilityEnvelope: ${envelope.hash_contextual}`);
+  }
+
+  const threshold = validateSimilarityThreshold(envelope.similarity_score);
+  if (!threshold.ok) {
+    throw createMeshValidationError(`Invalid similarity_score in IrreversibilityEnvelope: ${String(envelope.similarity_score)}`);
+  }
+
+  const node: MeshNodeInfo = {
+    node_id: envelope.shard_id,
+    node_type: NodeType.personal,
+    reputation_score: clampReputationScore(0.5),
+    ethical_weight: clampEthicalWeight(0.8),
+  };
+
+  if (!isValidMeshNodeInfo(node)) {
+    throw createMeshInvalidNodeError('Mesh pipeline entry produced an invalid MeshNodeInfo scaffold.', node);
+  }
+
+  const registered = await mesh_register_node(node);
+  if (!isValidMeshNodeInfo(registered)) {
+    throw createMeshNodeStubError({ registered });
+  }
+
+  const gossip = await mesh_propagate_gossip(registered);
+  if (!isValidGossipMessage(gossip)) {
+    throw createMeshGossipError({ gossip });
+  }
+
+  return registered;
 }
 
 export {};

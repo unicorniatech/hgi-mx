@@ -1,9 +1,16 @@
 import type { EVAInput, EVAVector } from './eva/eva-placeholder';
+import { eva_pipeline_entry } from './eva/eva-placeholder';
 import type { ESSIntent } from './ess/ess-placeholder';
+import { ess_pipeline_entry } from './ess/ess-placeholder';
 import type { HEVScore } from './hev/hev-placeholder';
+import { hev_pipeline_entry } from './hev/hev-placeholder';
 import type { MOLIEMap } from './molie/molie-placeholder';
+import { molie_pipeline_entry } from './molie/molie-placeholder';
 import type { EmoShard } from './bips/bips-placeholder';
+import type { IrreversibilityEnvelope } from './bips/bips-placeholder';
+import { bips_pipeline_entry } from './bips/bips-placeholder';
 import type { GossipMessage, MeshNodeInfo } from './mesh/mesh-placeholder';
+import { mesh_pipeline_entry } from './mesh/mesh-placeholder';
 
 /**
  * Stable error codes for pipeline structural/validation failures.
@@ -11,6 +18,9 @@ import type { GossipMessage, MeshNodeInfo } from './mesh/mesh-placeholder';
 export enum PipelineErrorCode {
   ORDER_VIOLATION = 'ORDER_VIOLATION',
   TYPE_VIOLATION = 'TYPE_VIOLATION',
+  CHAIN_VALIDATION_FAIL = 'CHAIN_VALIDATION_FAIL',
+  MODULE_DISPATCH_ERROR = 'MODULE_DISPATCH_ERROR',
+  CANON_VIOLATION = 'CANON_VIOLATION',
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   INVALID_STRUCTURE = 'INVALID_STRUCTURE',
 }
@@ -56,6 +66,11 @@ export interface PipelineOrderValidationResult {
 export interface PipelineHandoffCompatibilityResult {
   ok: boolean;
   details?: string;
+}
+
+export interface FullHandoffChainValidationResult {
+  ok: boolean;
+  violations: string[];
 }
 
 /**
@@ -119,6 +134,36 @@ export function createPipelineTypeError(from: string, to: string, details?: stri
 }
 
 /**
+ * Factory for a full-chain validation error.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ *
+ * @param violations - Human-readable validation violations.
+ * @returns A {@link PipelineError} with code {@link PipelineErrorCode.CHAIN_VALIDATION_FAIL}.
+ */
+export function createPipelineChainError(violations: string[]): PipelineError {
+  const details = violations.length > 0 ? violations.join(' | ') : 'Unknown chain validation failure.';
+  return new PipelineError(PipelineErrorCode.CHAIN_VALIDATION_FAIL, `Pipeline chain validation failed: ${details}`);
+}
+
+/**
+ * Factory for a module dispatch error.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ *
+ * @param module - The module/stage being dispatched.
+ * @param error - Optional underlying error.
+ * @returns A {@link PipelineError} with code {@link PipelineErrorCode.MODULE_DISPATCH_ERROR}.
+ */
+export function createPipelineDispatchError(module: string, error?: unknown): PipelineError {
+  const message = error instanceof Error ? error.message : error === undefined ? 'Unknown error' : String(error);
+  return new PipelineError(
+    PipelineErrorCode.MODULE_DISPATCH_ERROR,
+    `Pipeline module dispatch failed (${module}): ${message}`,
+  );
+}
+
+/**
  * Check whether metadata includes a Canon reference.
  *
  * Structural validation only: this verifies `metadata` is a record with a
@@ -133,6 +178,67 @@ export function hasCanonReference(metadata: unknown): boolean {
   if (!isRecord(metadata)) return false;
   const canonSection = metadata.canon_section;
   return typeof canonSection === 'string' && canonSection.trim().length > 0;
+}
+
+/**
+ * Validate a full pipeline handoff chain.
+ *
+ * This function performs structure-only validation:
+ * - Runs sequential {@link isCompatibleHandoff} checks for each adjacent stage
+ * - Optionally validates that each stage has Canon metadata using {@link hasCanonReference}
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ *
+ * @param stages - Pipeline stage names in execution order.
+ * @param stageMetadata - Optional per-stage metadata map (e.g. `{ EVA: { canon_section: "..." } }`).
+ * @returns A structured result when validation passes.
+ * @throws {PipelineError} When a handoff or Canon metadata violation is detected.
+ */
+export function validate_full_handoff_chain(
+  stages: string[],
+): FullHandoffChainValidationResult {
+  const violations: string[] = [];
+
+  const canonByStage: Readonly<Record<string, unknown>> = Object.freeze({
+    EVA: { canon_section: 'II.2.1' },
+    ESS: { canon_section: 'II.2.2' },
+    HEV: { canon_section: 'IX' },
+    MOLIE: { canon_section: 'V' },
+    BIPS: { canon_section: 'V' },
+    MESH: { canon_section: 'VI' },
+  });
+
+  for (let i = 0; i < stages.length - 1; i += 1) {
+    const from = stages[i];
+    const to = stages[i + 1];
+    const compat = isCompatibleHandoff(from, to);
+    if (!compat.ok) {
+      violations.push(compat.details ?? `Incompatible handoff: ${from} -> ${to}`);
+    }
+  }
+
+  for (let i = 0; i < stages.length; i += 1) {
+    const stage = stages[i];
+    const meta = canonByStage[stage];
+    if (!hasCanonReference(meta)) {
+      violations.push(`Missing Canon reference metadata for stage: ${stage}`);
+    }
+  }
+
+  const ok = violations.length === 0;
+  if (!ok) {
+    const canonViolations = violations.filter((v) => v.startsWith('Missing Canon reference metadata for stage:'));
+    if (canonViolations.length > 0) {
+      throw new PipelineError(
+        PipelineErrorCode.CANON_VIOLATION,
+        `Pipeline Canon metadata validation failed: ${canonViolations.join(' | ')}`,
+      );
+    }
+
+    throw createPipelineChainError(violations);
+  }
+
+  return { ok, violations };
 }
 
 /**
@@ -176,6 +282,182 @@ export function isCompatibleHandoff(from: string, to: string): PipelineHandoffCo
   }
 
   return { ok: true };
+}
+
+export interface PipelineScaffoldResult {
+  evaVector: EVAVector;
+  essIntent: ESSIntent;
+  hevScore: HEVScore;
+  molieMap: MOLIEMap;
+  bipsEnvelope: IrreversibilityEnvelope;
+  meshNode: MeshNodeInfo;
+}
+
+function validateStagesSubsequence(stages: string[]): PipelineOrderValidationResult {
+  const expected = ['EVA', 'ESS', 'HEV', 'MOLIE', 'BIPS', 'MESH'] as const;
+  const actual = [...stages];
+
+  const seen = new Set<string>();
+  const indices: number[] = [];
+  for (const stage of actual) {
+    if (seen.has(stage)) return { ok: false, expected: [...expected], actual };
+    seen.add(stage);
+    const idx = expected.indexOf(stage as (typeof expected)[number]);
+    if (idx === -1) return { ok: false, expected: [...expected], actual };
+    indices.push(idx);
+  }
+
+  const ok = indices.every((idx, i) => (i === 0 ? true : idx > indices[i - 1]));
+  return { ok, expected: [...expected], actual };
+}
+
+/**
+ * Run a structure-only pipeline scaffold using deterministic stage adapters.
+ *
+ * This orchestrator performs validation + wiring only:
+ * - Validates the canonical pipeline order
+ * - Validates required handoff compatibility
+ * - Calls stage `*_pipeline_entry` adapters in canonical order
+ *
+ * No real processing, scoring, hashing, networking, or side effects are executed.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ *
+ * @param input - The EVA input payload (metadata-only).
+ * @returns A full deterministic pipeline result bundle.
+ * @throws {PipelineError} When order, compatibility, or stage validation fails.
+ */
+export async function run_pipeline_scaffold(input: EVAInput): Promise<PipelineScaffoldResult> {
+  const stages = ['EVA', 'ESS', 'HEV', 'MOLIE', 'BIPS', 'MESH'];
+  const order = validatePipelineOrder(stages);
+  if (!order.ok) {
+    throw createPipelineOrderError(order.expected, order.actual);
+  }
+
+  const compatEVAESS = isCompatibleHandoff('EVA', 'ESS');
+  if (!compatEVAESS.ok) throw createPipelineTypeError('EVA', 'ESS', compatEVAESS.details);
+
+  const compatESSHEV = isCompatibleHandoff('ESS', 'HEV');
+  if (!compatESSHEV.ok) throw createPipelineTypeError('ESS', 'HEV', compatESSHEV.details);
+
+  const compatESSMOLIE = isCompatibleHandoff('ESS', 'MOLIE');
+  if (!compatESSMOLIE.ok) throw createPipelineTypeError('ESS', 'MOLIE', compatESSMOLIE.details);
+
+  const compatHEVBIPS = isCompatibleHandoff('HEV', 'BIPS');
+  if (!compatHEVBIPS.ok) throw createPipelineTypeError('HEV', 'BIPS', compatHEVBIPS.details);
+
+  const compatMOLIEBIPS = isCompatibleHandoff('MOLIE', 'BIPS');
+  if (!compatMOLIEBIPS.ok) throw createPipelineTypeError('MOLIE', 'BIPS', compatMOLIEBIPS.details);
+
+  const compatBIPSMESH = isCompatibleHandoff('BIPS', 'MESH');
+  if (!compatBIPSMESH.ok) throw createPipelineTypeError('BIPS', 'MESH', compatBIPSMESH.details);
+
+  try {
+    const evaVector = await eva_pipeline_entry(input);
+    const essIntent = await ess_pipeline_entry(evaVector);
+    const hevScore = await hev_pipeline_entry(essIntent);
+    const molieMap = await molie_pipeline_entry(essIntent);
+    const bipsEnvelope = await bips_pipeline_entry({ molieMap, hevScore });
+    const meshNode = await mesh_pipeline_entry(bipsEnvelope);
+
+    return { evaVector, essIntent, hevScore, molieMap, bipsEnvelope, meshNode };
+  } catch (err) {
+    if (err instanceof PipelineError) throw err;
+    throw createPipelineDispatchError('SCAFFOLD', err);
+  }
+}
+
+/**
+ * Pipeline entry wrapper.
+ *
+ * Structure-only pipeline orchestration:
+ * - Validates stage order against the canonical sequence
+ * - Validates full handoff compatibility + Canon metadata via {@link validate_full_handoff_chain}
+ * - Dynamically dispatches to each stage `*_pipeline_entry`
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ *
+ * @param input - Unknown upstream payload (typically EVAInput for full-chain runs).
+ * @param stages - Optional stage list. Defaults to full chain.
+ * @returns The output of the final stage.
+ * @throws {PipelineError} When validation or stage execution fails.
+ */
+export async function pipeline_entry(input: unknown, stages?: string[]): Promise<unknown> {
+  const defaultStages = ['EVA', 'ESS', 'HEV', 'MOLIE', 'BIPS', 'MESH'];
+  const chosen = stages ?? defaultStages;
+
+  const order = validateStagesSubsequence(chosen);
+  if (!order.ok) {
+    throw createPipelineOrderError(order.expected, order.actual);
+  }
+
+  validate_full_handoff_chain(chosen);
+
+  const results: Partial<PipelineScaffoldResult> = {};
+  let current: unknown = input;
+
+  try {
+    for (const stage of chosen) {
+      if (stage === 'EVA') {
+        const out = await eva_pipeline_entry(current);
+        results.evaVector = out;
+        current = out;
+        continue;
+      }
+
+      if (stage === 'ESS') {
+        const out = await ess_pipeline_entry(current);
+        results.essIntent = out;
+        current = out;
+        continue;
+      }
+
+      if (stage === 'HEV') {
+        const out = await hev_pipeline_entry(current);
+        results.hevScore = out;
+        current = out;
+        continue;
+      }
+
+      if (stage === 'MOLIE') {
+        const out = await molie_pipeline_entry(current);
+        results.molieMap = out;
+        current = out;
+        continue;
+      }
+
+      if (stage === 'BIPS') {
+        const molieMap = results.molieMap;
+        const hevScore = results.hevScore;
+        if (molieMap === undefined || hevScore === undefined) {
+          throw createPipelineTypeError(
+            'BIPS',
+            'INPUT',
+            'BIPS requires both MOLIEMap and HEVScore from upstream stages.',
+          );
+        }
+        const out = await bips_pipeline_entry({ molieMap, hevScore });
+        results.bipsEnvelope = out;
+        current = out;
+        continue;
+      }
+
+      if (stage === 'MESH') {
+        const out = await mesh_pipeline_entry(current);
+        results.meshNode = out;
+        current = out;
+        continue;
+      }
+
+      throw createPipelineTypeError('PIPELINE', stage, 'Unknown pipeline stage.');
+    }
+
+    return current;
+  } catch (err) {
+    if (err instanceof PipelineError) throw err;
+    const stage = typeof chosen[chosen.length - 1] === 'string' ? chosen[chosen.length - 1] : 'UNKNOWN';
+    throw createPipelineDispatchError(stage, err);
+  }
 }
 
 export async function execute_hgi_pipeline(input: EVAInput): Promise<EmoShard> {
