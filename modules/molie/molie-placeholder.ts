@@ -8,6 +8,7 @@
 // - Keep changes atomic and versionable.
 
 import { ESSIntent, clampIntensity, clampValence, isValidESSIntent } from '../ess/ess-placeholder';
+import { moliePhi3ModelLoader } from './molie-model-loader';
 
 /**
  * Narrow an `unknown` value to a plain object record.
@@ -406,23 +407,44 @@ export async function extract_semantic_clusters(intent: ESSIntent): Promise<Sema
   // TODO(HGI): NO SEMANTIC LOGIC
   // TODO(HGI): Extract semantic clusters from ESS intent
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
-  void intent;
+  if (!isValidESSIntent(intent)) {
+    throw createMOLIEValidationError('Invalid ESSIntent input for MOLIE semantic cluster extraction.');
+  }
+
+  const text = [
+    intent.semantic_core,
+    intent.emotional_context.primary_emotion,
+    ...intent.emotional_context.secondary_emotions,
+    `intensity:${String(clampIntensity(intent.emotional_context.intensity))}`,
+    `valence:${String(clampValence(intent.emotional_context.valence))}`,
+    `clarity:${String(intent.clarity_score)}`,
+  ]
+    .filter((s) => typeof s === 'string' && s.trim().length > 0)
+    .join(' ');
+
+  let weights: readonly number[] | null = null;
+
+  try {
+    weights = await moliePhi3ModelLoader.inferClusterWeights(text, { executionProviders: ['cuda', 'cpu'] });
+  } catch (err) {
+    console.warn('MOLIE Phi-3 infer failed - fallback active:', err);
+  }
 
   const clusters: SemanticCluster[] = [
     {
       id: 'cluster_alpha',
       node_ids: [],
-      cluster_weight: 0.5,
+      cluster_weight: clampClusterWeight(weights?.[0] ?? 0.5),
     },
     {
       id: 'cluster_beta',
       node_ids: [],
-      cluster_weight: 0.75,
+      cluster_weight: clampClusterWeight(weights?.[1] ?? 0.75),
     },
     {
       id: 'cluster_gamma',
       node_ids: [],
-      cluster_weight: 0.25,
+      cluster_weight: clampClusterWeight(weights?.[2] ?? 0.25),
     },
   ];
 

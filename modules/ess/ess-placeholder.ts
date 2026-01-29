@@ -8,6 +8,7 @@
 // - Keep changes atomic and versionable.
 
 import { EVAVector, isValidEVAVector, validateEVAVectorShape } from '../eva/eva-placeholder';
+import { essMLPModelLoader } from './ess-model-loader';
 
 export enum ESSErrorCode {
   VALIDATION_ERROR = 'VALIDATION_ERROR',
@@ -331,7 +332,7 @@ export function normalizeEmotionWeights(weights: EmotionWeights): EmotionWeights
     primary_emotion_weight: clampToRange(weights.primary_emotion_weight, ESS_WEIGHT_MIN, ESS_WEIGHT_MAX),
     secondary_emotion_weights: normalizedSecondary,
     intensity_weight: clampToRange(weights.intensity_weight, ESS_WEIGHT_MIN, ESS_WEIGHT_MAX),
-    valence_weight: clampToRange(weights.valence_weight, ESS_WEIGHT_MIN, ESS_WEIGHT_MAX),
+    valence_weight: clampValence(weights.valence_weight),
   };
 }
 
@@ -380,17 +381,32 @@ export async function compute_emotion_weights(vector: EVAVector): Promise<Emotio
     );
   }
 
-  const primary = clampIntensity(vector.energy_mean);
+  const fallbackPrimary = clampIntensity(vector.energy_mean);
 
-  const weights: EmotionWeights = {
-    primary_emotion_weight: primary,
-    secondary_emotion_weights: {
-      joy: 0.2,
-      sadness: 0.1,
-    },
-    intensity_weight: clampIntensity(primary),
-    valence_weight: 0.5,
-  };
+  let weights: EmotionWeights;
+
+  try {
+    const out = await essMLPModelLoader.inferFromEVAVector(vector, { executionProviders: ['cuda', 'cpu'] });
+
+    weights = {
+      primary_emotion_weight: Math.min(1, Math.max(0, out.primaryWeight)),
+      secondary_emotion_weights: Object.fromEntries(
+        Object.entries(out.secondaryWeights).map(([k, v]) => [k, Math.min(1, Math.max(0, v))]),
+      ),
+      intensity_weight: clampIntensity(Math.min(1, Math.max(0, out.intensityWeight))),
+      valence_weight: clampValence(Math.min(1, Math.max(-1, out.valence))),
+    };
+  } catch {
+    weights = {
+      primary_emotion_weight: fallbackPrimary,
+      secondary_emotion_weights: {
+        joy: 0.2,
+        sadness: 0.1,
+      },
+      intensity_weight: clampIntensity(fallbackPrimary),
+      valence_weight: clampValence(0.5),
+    };
+  }
 
   const normalized = normalizeEmotionWeights(weights);
 

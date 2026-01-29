@@ -11,6 +11,7 @@
 import type { ESSIntent } from '../ess/ess-placeholder';
 import { HEVScore, isValidHEVScore, normalizeHEVScore } from '../hev/hev-placeholder';
 import { isValidMOLIEMap, MOLIEMap } from '../molie/molie-placeholder';
+import { hashContextualEnvelope } from './bips-hasher';
 
 /**
  * Narrow an `unknown` value to a plain object record.
@@ -379,13 +380,14 @@ export async function bips_generate(molieMap: MOLIEMap, hevScore: HEVScore): Pro
   }
 
   const normalizedHEV = normalizeHEVScore(hevScore);
-  void normalizedHEV;
+
+  const out = await hashContextualEnvelope(molieMap, normalizedHEV);
 
   const envelope: IrreversibilityEnvelope = {
-    shard_id: 'shard_alpha',
-    hash_contextual: '0'.repeat(64),
-    entropy_proof: 0.5,
-    similarity_score: 0.1,
+    shard_id: out.shard_id,
+    hash_contextual: out.hash_contextual,
+    entropy_proof: out.entropy_proof,
+    similarity_score: out.similarity_score,
   };
 
   if (!isValidShardID(envelope.shard_id)) {
@@ -404,6 +406,8 @@ export async function bips_generate(molieMap: MOLIEMap, hevScore: HEVScore): Pro
   if (!isValidIrreversibilityEnvelope(envelope)) {
     throw createBIPSEnvelopeStubError('Generated IrreversibilityEnvelope failed structural validation.');
   }
+
+  validateEnvelopeOrThrow(envelope);
 
   return envelope;
 }

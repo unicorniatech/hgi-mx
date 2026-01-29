@@ -18,6 +18,7 @@ import {
 } from '../bips/bips-placeholder';
 import { EthicalGradient } from '../hev/hev-placeholder';
 import type { HEVScore } from '../hev/hev-placeholder';
+import { meshLibp2pAdapter } from './mesh-libp2p-adapter';
 
 /**
  * Narrow an `unknown` value to a plain object record.
@@ -382,12 +383,35 @@ export async function mesh_register_node(node: MeshNodeInfo): Promise<MeshNodeIn
     throw createMeshValidationError('mesh_register_node requires a non-empty node_id.');
   }
 
-  const registered: MeshNodeInfo = {
+  let registered: MeshNodeInfo = {
     ...node,
     node_id: node.node_id,
-    reputation_score: clampReputationScore(0.5),
-    ethical_weight: clampEthicalWeight(0.8),
+    reputation_score: clampReputationScore(node.reputation_score),
+    ethical_weight: clampEthicalWeight(node.ethical_weight),
   };
+
+  try {
+    await meshLibp2pAdapter.registerLocalNode(node.node_id);
+
+    const peers = meshLibp2pAdapter.getDiscoveredPeerIds().slice(0, 5);
+    let okCount = 0;
+    for (const peerId of peers) {
+      const ok = await meshLibp2pAdapter.handshakeWithPeer(peerId);
+      if (ok) okCount += 1;
+    }
+
+    registered = normalizeMeshNodeInfo({
+      ...registered,
+      reputation_score: clampReputationScore(registered.reputation_score + okCount * 0.05),
+    });
+  } catch (err) {
+    console.warn('Mesh libp2p registration failed - fallback active:', err);
+    registered = normalizeMeshNodeInfo({
+      ...registered,
+      reputation_score: clampReputationScore(0.5),
+      ethical_weight: clampEthicalWeight(0.8),
+    });
+  }
 
   if (!isValidMeshNodeInfo(registered)) {
     throw createMeshNodeStubError({ registered });
@@ -506,7 +530,7 @@ export async function mesh_pipeline_entry(input: unknown): Promise<MeshNodeInfo>
   }
 
   const node: MeshNodeInfo = {
-    node_id: envelope.shard_id,
+    node_id: envelope.hash_contextual,
     node_type: NodeType.personal,
     reputation_score: clampReputationScore(0.5),
     ethical_weight: clampEthicalWeight(0.8),

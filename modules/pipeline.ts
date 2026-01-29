@@ -3,6 +3,7 @@ import { eva_pipeline_entry } from './eva/eva-placeholder';
 import type { ESSIntent } from './ess/ess-placeholder';
 import { ess_pipeline_entry } from './ess/ess-placeholder';
 import type { HEVScore } from './hev/hev-placeholder';
+import { EthicalGradient } from './hev/hev-placeholder';
 import { hev_pipeline_entry } from './hev/hev-placeholder';
 import type { MOLIEMap } from './molie/molie-placeholder';
 import { molie_pipeline_entry } from './molie/molie-placeholder';
@@ -10,6 +11,7 @@ import type { EmoShard } from './bips/bips-placeholder';
 import type { IrreversibilityEnvelope } from './bips/bips-placeholder';
 import { bips_pipeline_entry } from './bips/bips-placeholder';
 import type { GossipMessage, MeshNodeInfo } from './mesh/mesh-placeholder';
+import { NodeType } from './mesh/mesh-placeholder';
 import { mesh_pipeline_entry } from './mesh/mesh-placeholder';
 
 /**
@@ -23,6 +25,18 @@ export enum PipelineErrorCode {
   CANON_VIOLATION = 'CANON_VIOLATION',
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   INVALID_STRUCTURE = 'INVALID_STRUCTURE',
+}
+
+function isEVAInputLike(input: unknown): input is EVAInput {
+  if (!isRecord(input)) return false;
+  return (
+    typeof input.timestamp === 'number' &&
+    Number.isFinite(input.timestamp) &&
+    typeof input.duration_ms === 'number' &&
+    Number.isFinite(input.duration_ms) &&
+    typeof input.sample_rate === 'number' &&
+    Number.isFinite(input.sample_rate)
+  );
 }
 
 /**
@@ -293,6 +307,156 @@ export interface PipelineScaffoldResult {
   meshNode: MeshNodeInfo;
 }
 
+function nowMs(): number {
+  return Date.now();
+}
+
+function getStageTimeoutMs(stage: string): number {
+  const envKey = `HGI_STAGE_TIMEOUT_MS_${stage}`;
+  const v = process.env[envKey];
+  const parsed = typeof v === 'string' ? Number(v) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return 15_000;
+}
+
+function isTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'TimeoutError';
+}
+
+function isLikelyModelError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('onnx') ||
+    msg.includes('ort') ||
+    msg.includes('cuda') ||
+    msg.includes('cudnn') ||
+    msg.includes('execution provider') ||
+    msg.includes('out of memory') ||
+    msg.includes('oom') ||
+    msg.includes('alloc')
+  );
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, stage: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  const timer = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      const e = new Error(`Stage timeout after ${timeoutMs}ms: ${stage}`);
+      e.name = 'TimeoutError';
+      reject(e);
+    }, timeoutMs);
+  });
+
+  try {
+    return (await Promise.race([promise, timer])) as T;
+  } finally {
+    if (timeout !== null) clearTimeout(timeout);
+  }
+}
+
+async function runStage<T>(
+  stage: string,
+  fn: () => Promise<T>,
+  fallback: () => Promise<T>,
+): Promise<{ value: T; degraded: boolean }>
+{
+  if (process.env.HGI_FORCE_DEGRADED === '1') {
+    console.warn(`[pipeline] ${stage} forced degraded mode - fallback active`);
+    const fbStart = nowMs();
+    const value = await fallback();
+    const fbElapsed = nowMs() - fbStart;
+    console.log(`[pipeline] ${stage} fallback ok in ${fbElapsed}ms`);
+    return { value, degraded: true };
+  }
+
+  const start = nowMs();
+  try {
+    const timeoutMs = getStageTimeoutMs(stage);
+    const value = await withTimeout(fn(), timeoutMs, stage);
+    const elapsed = nowMs() - start;
+    console.log(`[pipeline] ${stage} ok in ${elapsed}ms`);
+    return { value, degraded: false };
+  } catch (err) {
+    const elapsed = nowMs() - start;
+    const shouldFallback = isTimeoutError(err) || isLikelyModelError(err);
+    if (!shouldFallback) throw err;
+    console.warn(`[pipeline] ${stage} failed in ${elapsed}ms - degraded fallback active:`, err);
+    const fbStart = nowMs();
+    const value = await fallback();
+    const fbElapsed = nowMs() - fbStart;
+    console.log(`[pipeline] ${stage} fallback ok in ${fbElapsed}ms`);
+    return { value, degraded: true };
+  }
+}
+
+function fallbackEVAVector(): EVAVector {
+  return {
+    pitch_mean: 0.5,
+    pitch_variance: 0.1,
+    energy_mean: 0.5,
+    rhythm_features: new Array(8).fill(0.5),
+  };
+}
+
+function fallbackESSIntent(): ESSIntent {
+  return {
+    semantic_core: 'fallback_intent',
+    emotional_context: {
+      primary_emotion: 'calm',
+      secondary_emotions: ['curiosity'],
+      intensity: 0.5,
+      valence: 0.0,
+    },
+    clarity_score: 0.7,
+  };
+}
+
+function fallbackHEVScore(): HEVScore {
+  return {
+    clarity_score: 0.7,
+    coherence_score: 0.7,
+    vulnerability_score: 0.3,
+    toxicity_score: 0.1,
+    ethical_color: EthicalGradient.GREEN_SAFE,
+    degradedMode: true,
+  };
+}
+
+function fallbackMOLIEMap(): MOLIEMap {
+  return {
+    intention_nodes: [
+      { id: 'node_alpha', semantic_weight: 0.6, emotional_anchor: 'anchor_alpha', connections: ['node_beta'] },
+      { id: 'node_beta', semantic_weight: 0.4, emotional_anchor: 'anchor_beta', connections: ['node_alpha'] },
+    ],
+    semantic_clusters: [
+      { id: 'cluster_alpha', node_ids: ['node_alpha'], cluster_weight: 0.5 },
+      { id: 'cluster_beta', node_ids: ['node_beta'], cluster_weight: 0.3 },
+      { id: 'cluster_gamma', node_ids: ['node_alpha', 'node_beta'], cluster_weight: 0.2 },
+    ],
+    narrative_threads: ['thread_alpha'],
+  };
+}
+
+function fallbackBIPSEnvelope(): IrreversibilityEnvelope {
+  return {
+    shard_id: 'fallback_shard',
+    hash_contextual: '0'.repeat(64),
+    entropy_proof: 0.5,
+    similarity_score: 0.1,
+  };
+}
+
+function fallbackMeshNode(nodeId: string): MeshNodeInfo {
+  return {
+    node_id: nodeId,
+    node_type: NodeType.personal,
+    reputation_score: 0.5,
+    ethical_weight: 0.8,
+  };
+}
+
 function validateStagesSubsequence(stages: string[]): PipelineOrderValidationResult {
   const expected = ['EVA', 'ESS', 'HEV', 'MOLIE', 'BIPS', 'MESH'] as const;
   const actual = [...stages];
@@ -334,6 +498,8 @@ export async function run_pipeline_scaffold(input: EVAInput): Promise<PipelineSc
     throw createPipelineOrderError(order.expected, order.actual);
   }
 
+  validate_full_handoff_chain(stages);
+
   const compatEVAESS = isCompatibleHandoff('EVA', 'ESS');
   if (!compatEVAESS.ok) throw createPipelineTypeError('EVA', 'ESS', compatEVAESS.details);
 
@@ -353,12 +519,31 @@ export async function run_pipeline_scaffold(input: EVAInput): Promise<PipelineSc
   if (!compatBIPSMESH.ok) throw createPipelineTypeError('BIPS', 'MESH', compatBIPSMESH.details);
 
   try {
-    const evaVector = await eva_pipeline_entry(input);
-    const essIntent = await ess_pipeline_entry(evaVector);
-    const hevScore = await hev_pipeline_entry(essIntent);
-    const molieMap = await molie_pipeline_entry(essIntent);
-    const bipsEnvelope = await bips_pipeline_entry({ molieMap, hevScore });
-    const meshNode = await mesh_pipeline_entry(bipsEnvelope);
+    const evaStage = await runStage('EVA', () => eva_pipeline_entry(input), async () => fallbackEVAVector());
+    const evaVector = evaStage.value;
+
+    const essStage = await runStage('ESS', () => ess_pipeline_entry(evaVector), async () => fallbackESSIntent());
+    const essIntent = essStage.value;
+
+    const hevStage = await runStage('HEV', () => hev_pipeline_entry(essIntent), async () => fallbackHEVScore());
+    const hevScore = hevStage.value;
+
+    const molieStage = await runStage('MOLIE', () => molie_pipeline_entry(essIntent), async () => fallbackMOLIEMap());
+    const molieMap = molieStage.value;
+
+    const bipsStage = await runStage(
+      'BIPS',
+      () => bips_pipeline_entry({ molieMap, hevScore }),
+      async () => fallbackBIPSEnvelope(),
+    );
+    const bipsEnvelope = bipsStage.value;
+
+    const meshStage = await runStage(
+      'MESH',
+      () => mesh_pipeline_entry(bipsEnvelope),
+      async () => fallbackMeshNode(bipsEnvelope.hash_contextual),
+    );
+    const meshNode = meshStage.value;
 
     return { evaVector, essIntent, hevScore, molieMap, bipsEnvelope, meshNode };
   } catch (err) {
@@ -393,36 +578,45 @@ export async function pipeline_entry(input: unknown, stages?: string[]): Promise
 
   validate_full_handoff_chain(chosen);
 
+  if (
+    chosen.length === defaultStages.length &&
+    chosen.every((s, i) => s === defaultStages[i]) &&
+    isEVAInputLike(input)
+  ) {
+    const scaffold = await run_pipeline_scaffold(input);
+    return scaffold.meshNode;
+  }
+
   const results: Partial<PipelineScaffoldResult> = {};
   let current: unknown = input;
 
   try {
     for (const stage of chosen) {
       if (stage === 'EVA') {
-        const out = await eva_pipeline_entry(current);
-        results.evaVector = out;
-        current = out;
+        const r = await runStage('EVA', () => eva_pipeline_entry(current), async () => fallbackEVAVector());
+        results.evaVector = r.value;
+        current = r.value;
         continue;
       }
 
       if (stage === 'ESS') {
-        const out = await ess_pipeline_entry(current);
-        results.essIntent = out;
-        current = out;
+        const r = await runStage('ESS', () => ess_pipeline_entry(current), async () => fallbackESSIntent());
+        results.essIntent = r.value;
+        current = r.value;
         continue;
       }
 
       if (stage === 'HEV') {
-        const out = await hev_pipeline_entry(current);
-        results.hevScore = out;
-        current = out;
+        const r = await runStage('HEV', () => hev_pipeline_entry(current), async () => fallbackHEVScore());
+        results.hevScore = r.value;
+        current = r.value;
         continue;
       }
 
       if (stage === 'MOLIE') {
-        const out = await molie_pipeline_entry(current);
-        results.molieMap = out;
-        current = out;
+        const r = await runStage('MOLIE', () => molie_pipeline_entry(current), async () => fallbackMOLIEMap());
+        results.molieMap = r.value;
+        current = r.value;
         continue;
       }
 
@@ -436,16 +630,26 @@ export async function pipeline_entry(input: unknown, stages?: string[]): Promise
             'BIPS requires both MOLIEMap and HEVScore from upstream stages.',
           );
         }
-        const out = await bips_pipeline_entry({ molieMap, hevScore });
-        results.bipsEnvelope = out;
-        current = out;
+        const r = await runStage(
+          'BIPS',
+          () => bips_pipeline_entry({ molieMap, hevScore }),
+          async () => fallbackBIPSEnvelope(),
+        );
+        results.bipsEnvelope = r.value;
+        current = r.value;
         continue;
       }
 
       if (stage === 'MESH') {
-        const out = await mesh_pipeline_entry(current);
-        results.meshNode = out;
-        current = out;
+        const env = results.bipsEnvelope;
+        const fallbackNodeId = env?.hash_contextual ?? '0'.repeat(64);
+        const r = await runStage(
+          'MESH',
+          () => mesh_pipeline_entry(current),
+          async () => fallbackMeshNode(fallbackNodeId),
+        );
+        results.meshNode = r.value;
+        current = r.value;
         continue;
       }
 

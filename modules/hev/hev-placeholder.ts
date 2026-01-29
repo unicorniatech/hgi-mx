@@ -8,6 +8,7 @@
 // - Keep changes atomic and versionable.
 
 import { ESSIntent, isValidESSIntent } from '../ess/ess-placeholder';
+import { hevDistilBertModelLoader } from './hev-model-loader';
 
 export enum HEVErrorCode {
    VALIDATION_ERROR = 'VALIDATION_ERROR',
@@ -208,6 +209,7 @@ export interface HEVScore {
    vulnerability_score: number; // 0.0 - 1.0
    toxicity_score: number; // 0.0 - 1.0
    ethical_color: EthicalGradient;
+   degradedMode?: boolean;
    // TODO(HGI): STRUCTURE ONLY
    // TODO(HGI): NO SCORING LOGIC
    // Reference: /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
@@ -224,6 +226,7 @@ export function isValidHEVScore(score: unknown): score is HEVScore {
    if (!isRecord(score)) return false;
 
    const ethicalColor = (score as Record<string, unknown>).ethical_color;
+   const degraded = (score as Record<string, unknown>).degradedMode;
 
    return (
       isFiniteNumber((score as Record<string, unknown>).clarity_score) &&
@@ -231,7 +234,8 @@ export function isValidHEVScore(score: unknown): score is HEVScore {
       isFiniteNumber((score as Record<string, unknown>).vulnerability_score) &&
       isFiniteNumber((score as Record<string, unknown>).toxicity_score) &&
       typeof ethicalColor === 'string' &&
-      isValidEthicalGradient(ethicalColor)
+      isValidEthicalGradient(ethicalColor) &&
+      (degraded === undefined || typeof degraded === 'boolean')
    );
 }
 
@@ -373,19 +377,57 @@ export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
       );
    }
 
-   const stubScore = buildHEVScoreStub(intent);
-   const stubValidation = validateHEVScore(stubScore);
-   if (!stubValidation.ok) {
-      throw createHEVStubError({ errors: stubValidation.errors, score: stubScore });
+   const text = [
+      intent.semantic_core,
+      intent.emotional_context.primary_emotion,
+      ...intent.emotional_context.secondary_emotions,
+   ]
+      .filter((s) => typeof s === 'string' && s.trim().length > 0)
+      .join(' ');
+
+   let toxicityScore = clampHEVMetric(1 - clampHEVMetric(intent.clarity_score));
+   let coherenceScore = clampHEVMetric(intent.clarity_score);
+   let degradedMode = false;
+
+   try {
+      const out = await hevDistilBertModelLoader.infer(text, { executionProviders: ['cuda', 'cpu'] });
+      toxicityScore = clampHEVMetric(out.toxicityScore);
+      coherenceScore = clampHEVMetric(0.65 * clampHEVMetric(intent.clarity_score) + 0.35 * clampHEVMetric(out.coherenceScore));
+   } catch (err) {
+      console.warn('HEV DistilBERT infer failed - fallback active:', err);
+      degradedMode = true;
    }
 
-   const normalized = normalizeHEVScore({ ...stubScore, ethical_color: EthicalGradient.GREEN_SAFE });
+   const score: HEVScore = {
+      clarity_score: clampHEVMetric(intent.clarity_score),
+      coherence_score: coherenceScore,
+      vulnerability_score: clampHEVMetric(intent.emotional_context.intensity),
+      toxicity_score: toxicityScore,
+      ethical_color: EthicalGradient.GREEN_SAFE,
+      degradedMode,
+   };
+
+   const normalized = normalizeHEVScore(score);
+
    const normalizedValidation = validateHEVScore(normalized);
    if (!normalizedValidation.ok) {
       throw createHEVStubError({ errors: normalizedValidation.errors, score: normalized });
    }
 
-   return normalized;
+   const assignedColor =
+      normalized.toxicity_score >= 0.7
+         ? EthicalGradient.RED_HIGH_RISK
+         : normalized.toxicity_score >= 0.4 || normalized.vulnerability_score >= 0.8
+            ? EthicalGradient.YELLOW_CAUTION
+            : EthicalGradient.GREEN_SAFE;
+
+   const colored: HEVScore = { ...normalized, ethical_color: assignedColor };
+   const coloredValidation = validateHEVScore(colored);
+   if (!coloredValidation.ok) {
+      throw createHEVGradientError({ errors: coloredValidation.errors, score: colored });
+   }
+
+   return colored;
  }
 
  /**

@@ -2,8 +2,26 @@
   "name": "hgi-mx",
   "version": "0.0.1",
   "scripts": {
-    "dev": "echo TODO"
+    "dev": "echo TODO",
+    "test": "node --test --import tsx tests/pipeline-end2end.spec.ts tests/onnx-runtime-smoke.spec.ts tests/eva-wav2vec2-smoke.spec.ts tests/ess-mlp-smoke.spec.ts tests/hev-distilbert-smoke.spec.ts tests/molie-phi3-smoke.spec.ts tests/bips-hash-smoke.spec.ts tests/mesh-libp2p-smoke.spec.ts tests/phase6-model-integration.spec.ts",
+    "test:onnx": "node --test --import tsx ./tests/onnx-runtime-smoke.spec.ts"
   },
-  "devDependencies": {},
-  "dependencies": {}
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "onnx-proto": "^0.0.6",
+    "protobufjs": "^7.5.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@onnxruntime-node/cuda": "latest",
+    "argon2": "^0.41.1",
+    "blake3": "^2.1.7",
+    "@libp2p/mdns": "^11.0.0",
+    "@libp2p/mplex": "^11.0.0",
+    "@libp2p/noise": "^12.0.0",
+    "@libp2p/tcp": "^10.0.0",
+    "libp2p": "^1.10.0",
+    "onnxruntime-node": "latest"
+  }
 }

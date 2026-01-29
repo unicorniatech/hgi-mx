@@ -7,6 +7,8 @@
 // - Create tasks that reference `/docs/core/hgi-core-v0.2-outline.md` (Section 3: EVA).
 // - Keep changes atomic and versionable.
 
+import { evaWav2Vec2ModelLoader } from './eva-model-loader';
+
 export interface EVAInput {
   timestamp: number;
   duration_ms: number;
@@ -380,14 +382,34 @@ export async function extract_prosody_features(input: EVAInput): Promise<Prosody
     throw createEVAInvalidInputError(['Invalid EVAInput for prosody feature extraction.']);
   }
 
-  const energyMean = Math.min(1, Math.max(0, normalized.duration_ms / EVA_DURATION_MAX_MS));
+  const fallbackEnergyMean = Math.min(1, Math.max(0, normalized.duration_ms / EVA_DURATION_MAX_MS));
 
-  const features: ProsodyFeatures = {
-    pitch_mean: 0.5,
-    pitch_variance: 0,
-    energy_mean: energyMean,
-    rhythm_features: new Array(8).fill(0.5),
-  };
+  let features: ProsodyFeatures;
+
+  try {
+    const embeddings = await evaWav2Vec2ModelLoader.inferEmbeddingsFromMetadata(
+      normalized.sample_rate,
+      normalized.duration_ms,
+      { executionProviders: ['cuda', 'cpu'] },
+    );
+
+    const mapped = evaWav2Vec2ModelLoader.embeddingsToProsody(embeddings.vector);
+
+    features = {
+      pitch_mean: Math.min(1, Math.max(0, mapped.pitch_mean)),
+      pitch_variance: Math.min(1, Math.max(0, mapped.pitch_variance)),
+      energy_mean: Math.min(1, Math.max(0, mapped.energy_mean)),
+      rhythm_features: mapped.rhythm_features.map((v) => Math.min(1, Math.max(0, v))),
+    };
+  } catch {
+    // Safe fallback: deterministic metadata-derived features
+    features = {
+      pitch_mean: 0.5,
+      pitch_variance: 0,
+      energy_mean: fallbackEnergyMean,
+      rhythm_features: new Array(8).fill(0.5),
+    };
+  }
 
   if (!isValidProsodyFeatures(features)) {
     throw createEVAValidationError(EVAErrorCode.INVALID_PROSODY, ['ProsodyFeatures failed structural validation.']);
