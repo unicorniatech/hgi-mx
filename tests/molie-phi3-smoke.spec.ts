@@ -1,8 +1,46 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import type { ESSIntent } from '../modules/ess/ess-placeholder';
 import { extract_semantic_clusters, isValidSemanticCluster, validateClusterNodeIDs } from '../modules/molie/molie-placeholder';
+
+function findFirstByExtSync(dir: string, ext: string, maxDepth: number): string | null {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isFile() && e.name.toLowerCase().endsWith(ext)) return full;
+    }
+    if (maxDepth <= 0) return null;
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const nested = findFirstByExtSync(path.join(dir, e.name), ext, maxDepth - 1);
+      if (nested !== null) return nested;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function setMolieEnvFromBaseIfPossible(): void {
+  const base = process.env.MODEL_BASE_PATH ?? './models';
+  const molieBase = path.resolve(base, 'molie');
+
+  if (!(typeof process.env.MOLIE_PHI3_ONNX_PATH === 'string' && process.env.MOLIE_PHI3_ONNX_PATH.trim().length > 0)) {
+    const onnxPath = findFirstByExtSync(molieBase, '.onnx', 4);
+    if (onnxPath !== null) process.env.MOLIE_PHI3_ONNX_PATH = onnxPath;
+  }
+
+  if (!(typeof process.env.MOLIE_PHI3_VOCAB_PATH === 'string' && process.env.MOLIE_PHI3_VOCAB_PATH.trim().length > 0)) {
+    const vocabPath = findFirstByExtSync(molieBase, 'vocab.txt', 4);
+    if (vocabPath !== null) process.env.MOLIE_PHI3_VOCAB_PATH = vocabPath;
+  }
+}
+
+setMolieEnvFromBaseIfPossible();
 
 function hasEnv(name: string): boolean {
   const v = process.env[name];

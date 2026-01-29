@@ -20,6 +20,11 @@ import { EthicalGradient } from '../hev/hev-placeholder';
 import type { HEVScore } from '../hev/hev-placeholder';
 import { meshLibp2pAdapter } from './mesh-libp2p-adapter';
 
+function hasEnv(name: string): boolean {
+  const v = process.env[name];
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
 /**
  * Narrow an `unknown` value to a plain object record.
  *
@@ -390,27 +395,29 @@ export async function mesh_register_node(node: MeshNodeInfo): Promise<MeshNodeIn
     ethical_weight: clampEthicalWeight(node.ethical_weight),
   };
 
-  try {
-    await meshLibp2pAdapter.registerLocalNode(node.node_id);
+  if (hasEnv('MESH_LIBP2P_SMOKE')) {
+    try {
+      await meshLibp2pAdapter.registerLocalNode(node.node_id);
 
-    const peers = meshLibp2pAdapter.getDiscoveredPeerIds().slice(0, 5);
-    let okCount = 0;
-    for (const peerId of peers) {
-      const ok = await meshLibp2pAdapter.handshakeWithPeer(peerId);
-      if (ok) okCount += 1;
+      const peers = meshLibp2pAdapter.getDiscoveredPeerIds().slice(0, 5);
+      let okCount = 0;
+      for (const peerId of peers) {
+        const ok = await meshLibp2pAdapter.handshakeWithPeer(peerId);
+        if (ok) okCount += 1;
+      }
+
+      registered = normalizeMeshNodeInfo({
+        ...registered,
+        reputation_score: clampReputationScore(registered.reputation_score + okCount * 0.05),
+      });
+    } catch (err) {
+      console.warn('Mesh libp2p registration failed - fallback active:', err);
+      registered = normalizeMeshNodeInfo({
+        ...registered,
+        reputation_score: clampReputationScore(0.5),
+        ethical_weight: clampEthicalWeight(0.8),
+      });
     }
-
-    registered = normalizeMeshNodeInfo({
-      ...registered,
-      reputation_score: clampReputationScore(registered.reputation_score + okCount * 0.05),
-    });
-  } catch (err) {
-    console.warn('Mesh libp2p registration failed - fallback active:', err);
-    registered = normalizeMeshNodeInfo({
-      ...registered,
-      reputation_score: clampReputationScore(0.5),
-      ethical_weight: clampEthicalWeight(0.8),
-    });
   }
 
   if (!isValidMeshNodeInfo(registered)) {

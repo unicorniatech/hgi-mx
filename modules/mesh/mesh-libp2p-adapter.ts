@@ -1,9 +1,3 @@
-import { createLibp2p, type Libp2p } from 'libp2p';
-import { tcp } from '@libp2p/tcp';
-import { mplex } from '@libp2p/mplex';
-import { noise } from '@libp2p/noise';
-import { mdns } from '@libp2p/mdns';
-
 const HANDSHAKE_PROTOCOL = '/hgi-mx/mesh/handshake/1.0.0';
 const HANDSHAKE_MAX_BYTES = 8 * 1024;
 
@@ -47,7 +41,7 @@ async function readAll(source: AsyncIterable<Uint8Array>, maxBytes?: number): Pr
 export class MeshLibp2pAdapter {
   private static instance: MeshLibp2pAdapter | null = null;
 
-  private node: Libp2p | null = null;
+  private node: unknown | null = null;
 
   private localNodeId: string | null = null;
 
@@ -64,8 +58,17 @@ export class MeshLibp2pAdapter {
     return MeshLibp2pAdapter.instance;
   }
 
-  public async start(): Promise<Libp2p> {
+  public async start(): Promise<unknown> {
     if (this.node !== null) return this.node;
+
+    const { createLibp2p } = (await import('libp2p')) as unknown as {
+      createLibp2p: (init: unknown) => Promise<unknown>;
+    };
+
+    const { tcp } = (await import('@libp2p/tcp')) as unknown as { tcp: () => unknown };
+    const { mplex } = (await import('@libp2p/mplex')) as unknown as { mplex: () => unknown };
+    const { noise } = (await import('@libp2p/noise')) as unknown as { noise: () => unknown };
+    const { mdns } = (await import('@libp2p/mdns')) as unknown as { mdns: (opts: unknown) => unknown };
 
     const node = await createLibp2p({
       transports: [tcp()],
@@ -78,7 +81,7 @@ export class MeshLibp2pAdapter {
       ],
     });
 
-    node.addEventListener('peer:discovery', (evt: Event) => {
+    (node as { addEventListener: (name: string, cb: (evt: Event) => void) => void }).addEventListener('peer:discovery', (evt: Event) => {
       const e = evt as CustomEvent<{ id: { toString(): string } }>;
       try {
         const pid = e.detail.id.toString();
@@ -88,7 +91,17 @@ export class MeshLibp2pAdapter {
       }
     });
 
-    node.handle(
+    (node as {
+      handle: (
+        protocol: string,
+        handler: (evt: {
+          stream: {
+            source: AsyncIterable<Uint8Array>;
+            sink: (source: Iterable<Uint8Array> | AsyncIterable<Uint8Array>) => Promise<void>;
+          };
+        }) => Promise<void>,
+      ) => void;
+    }).handle(
       HANDSHAKE_PROTOCOL,
       async (evt: {
         stream: {
@@ -126,7 +139,7 @@ export class MeshLibp2pAdapter {
       },
     );
 
-    await node.start();
+    await (node as { start: () => Promise<void> }).start();
 
     this.node = node;
     return node;
@@ -134,7 +147,7 @@ export class MeshLibp2pAdapter {
 
   public async stop(): Promise<void> {
     if (this.node === null) return;
-    await this.node.stop();
+    await (this.node as { stop: () => Promise<void> }).stop();
     this.node = null;
     this.localNodeId = null;
     this.discoveredPeerIds = new Set<string>();
@@ -162,7 +175,12 @@ export class MeshLibp2pAdapter {
     };
 
     try {
-      const stream = await node.dialProtocol(peerId, HANDSHAKE_PROTOCOL);
+      const stream = await (node as {
+        dialProtocol: (
+          peerId: string,
+          protocol: string,
+        ) => Promise<{ sink: (src: Iterable<Uint8Array> | AsyncIterable<Uint8Array>) => Promise<void>; source: AsyncIterable<Uint8Array> }>;
+      }).dialProtocol(peerId, HANDSHAKE_PROTOCOL);
       await stream.sink([encodeJson(payload)]);
       const bytes = await readAll(stream.source, HANDSHAKE_MAX_BYTES);
       const resp = decodeJson(bytes) as { ok?: unknown };

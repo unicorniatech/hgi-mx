@@ -99,6 +99,31 @@ test('onnx runtime smoke: init + create session with CUDA fallback to CPU', asyn
     assert.ok(session);
 
     if (caps.cudaAvailable) {
+      const ort = await import('onnxruntime-node');
+
+      // CUDA-only session should succeed when CUDA is available.
+      const cudaSession = await manager.getSession(modelPath, ['cuda']);
+      assert.ok(cudaSession);
+
+      const feeds: Record<string, unknown> = {
+        X: new ort.Tensor('float32', Float32Array.from([1]), [1]),
+      };
+      const out = await cudaSession.run(feeds as never);
+      assert.ok(out);
+
+      // Best-effort device name check if runtime exposes it.
+      const anyOrt = ort as unknown as { getCudaDeviceName?: () => string };
+      if (typeof anyOrt.getCudaDeviceName === 'function') {
+        const name = anyOrt.getCudaDeviceName();
+        assert.ok(typeof name === 'string' && name.trim().length > 0);
+        const expected = process.env.HGI_EXPECT_GPU_MODEL;
+        if (typeof expected === 'string' && expected.trim().length > 0) {
+          assert.ok(name.toLowerCase().includes(expected.trim().toLowerCase()));
+        }
+      }
+    }
+
+    if (caps.cudaAvailable) {
       assert.equal(warns.length, 0);
     } else {
       assert.ok(warns.some((w) => String(w[0]).includes('[onnx] CUDA requested but unavailable.')));

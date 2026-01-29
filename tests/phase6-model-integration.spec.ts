@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -15,6 +17,75 @@ import { isValidMeshNodeInfo } from '../modules/mesh/mesh-placeholder';
 import { run_pipeline_scaffold } from '../modules/pipeline';
 import { ONNXRuntimeManager } from '../modules/runtime/onnx-config';
 import { onnx } from 'onnx-proto';
+
+function findFirstFileRecursiveSync(dir: string, predicate: (filePath: string) => boolean, maxDepth: number): string | null {
+  if (maxDepth < 0) return null;
+  try {
+    const entries = fsSync.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isFile() && predicate(full)) return full;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const nested = findFirstFileRecursiveSync(path.join(dir, e.name), predicate, maxDepth - 1);
+      if (nested !== null) return nested;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function applyModelBasePathDefaults(): void {
+  const base = process.env.MODEL_BASE_PATH ?? './models';
+
+  const eva = path.resolve(base, 'eva', 'model.onnx');
+  if (!(typeof process.env.EVA_WAV2VEC2_ONNX_PATH === 'string' && process.env.EVA_WAV2VEC2_ONNX_PATH.trim().length > 0)) {
+    if (fsSync.existsSync(eva)) process.env.EVA_WAV2VEC2_ONNX_PATH = eva;
+  }
+
+  const ess = path.resolve(base, 'ess', 'model.onnx');
+  if (!(typeof process.env.ESS_MLP_ONNX_PATH === 'string' && process.env.ESS_MLP_ONNX_PATH.trim().length > 0)) {
+    if (fsSync.existsSync(ess)) process.env.ESS_MLP_ONNX_PATH = ess;
+  }
+
+  const hevModel = path.resolve(base, 'hev', 'model.quant.onnx');
+  if (!(typeof process.env.HEV_DISTILBERT_ONNX_PATH === 'string' && process.env.HEV_DISTILBERT_ONNX_PATH.trim().length > 0)) {
+    if (fsSync.existsSync(hevModel)) process.env.HEV_DISTILBERT_ONNX_PATH = hevModel;
+  }
+
+  const hevVocab = path.resolve(base, 'hev', 'vocab.txt');
+  if (!(typeof process.env.HEV_DISTILBERT_VOCAB_PATH === 'string' && process.env.HEV_DISTILBERT_VOCAB_PATH.trim().length > 0)) {
+    if (fsSync.existsSync(hevVocab)) process.env.HEV_DISTILBERT_VOCAB_PATH = hevVocab;
+  }
+
+  const molieBase = path.resolve(base, 'molie');
+  if (!(typeof process.env.MOLIE_PHI3_ONNX_PATH === 'string' && process.env.MOLIE_PHI3_ONNX_PATH.trim().length > 0)) {
+    const onnxPath = findFirstFileRecursiveSync(
+      molieBase,
+      (p) => p.toLowerCase().endsWith('.onnx'),
+      6,
+    );
+    if (onnxPath !== null) process.env.MOLIE_PHI3_ONNX_PATH = onnxPath;
+  }
+
+  const molieVocab = path.resolve(base, 'molie', 'vocab.txt');
+  if (!(typeof process.env.MOLIE_PHI3_VOCAB_PATH === 'string' && process.env.MOLIE_PHI3_VOCAB_PATH.trim().length > 0)) {
+    if (fsSync.existsSync(molieVocab)) {
+      process.env.MOLIE_PHI3_VOCAB_PATH = molieVocab;
+    } else {
+      const vocabPath = findFirstFileRecursiveSync(
+        molieBase,
+        (p) => p.toLowerCase().endsWith('vocab.txt'),
+        6,
+      );
+      if (vocabPath !== null) process.env.MOLIE_PHI3_VOCAB_PATH = vocabPath;
+    }
+  }
+}
+
+applyModelBasePathDefaults();
 
 function hasEnv(name: string): boolean {
   const v = process.env[name];
@@ -104,6 +175,94 @@ test('phase6: pipeline scaffold produces Phase 3-valid outputs (fallback-safe)',
 
   assert.ok(scaffold.bipsEnvelope.similarity_score < 0.15);
 });
+
+test(
+  'phase6: real-mode post-setup config (MODEL_BASE_PATH) has required model files',
+  { skip: !hasEnv('PHASE6_REAL_MODELS') },
+  async () => {
+    const base = process.env.MODEL_BASE_PATH ?? './models';
+
+    const required = [
+      path.resolve(base, 'eva', 'model.onnx'),
+      path.resolve(base, 'ess', 'model.onnx'),
+      path.resolve(base, 'hev', 'model.quant.onnx'),
+      path.resolve(base, 'hev', 'vocab.txt'),
+    ];
+
+    for (const p of required) {
+      await fs.access(p);
+    }
+
+    // MOLIE Phi-3 layout varies; require at least one .onnx file somewhere under models/molie.
+    const molieDir = path.resolve(base, 'molie');
+    const found = findFirstFileRecursiveSync(molieDir, (p) => p.toLowerCase().endsWith('.onnx'), 6);
+    assert.ok(found !== null, 'expected at least one .onnx file under models/molie');
+  },
+);
+
+test(
+  'phase6: post-setup regression - pnpm test passes in real mode (spawned) (opt-in)',
+  {
+    skip: !(
+      hasEnv('PHASE6_REAL_MODELS') &&
+      process.env.PHASE6_SPAWN_PNPM_TEST === '1' &&
+      process.env.HGI_CHILD_TEST_RUNNER !== '1'
+    ),
+  },
+  async () => {
+    // Avoid re-entrant invocation loops: the child sets HGI_CHILD_TEST_RUNNER=1.
+    const base = process.env.MODEL_BASE_PATH ?? './models';
+    const mustExist = [
+      path.resolve(base, 'eva', 'model.onnx'),
+      path.resolve(base, 'ess', 'model.onnx'),
+      path.resolve(base, 'hev', 'model.quant.onnx'),
+      path.resolve(base, 'hev', 'vocab.txt'),
+    ];
+
+    for (const p of mustExist) {
+      await fs.access(p);
+    }
+
+    const childEnv: Record<string, string | undefined> = {
+      ...process.env,
+      PHASE6_REAL_MODELS: '1',
+      HGI_CHILD_TEST_RUNNER: '1',
+    };
+
+    const { code, stdout, stderr } = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      const child = spawn('pnpm', ['test'], {
+        cwd: process.cwd(),
+        env: childEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: true,
+      });
+
+      let out = '';
+      let err = '';
+
+      child.stdout.on('data', (d: unknown) => {
+        out += String(d);
+      });
+      child.stderr.on('data', (d: unknown) => {
+        err += String(d);
+      });
+
+      child.on('close', (c: number | null) => {
+        resolve({ code: c, stdout: out, stderr: err });
+      });
+    });
+
+    if (code !== 0) {
+      // Include output for debugging.
+      // eslint-disable-next-line no-console
+      console.error('[phase6 spawned pnpm test] stdout:\n', stdout);
+      // eslint-disable-next-line no-console
+      console.error('[phase6 spawned pnpm test] stderr:\n', stderr);
+    }
+
+    assert.equal(code, 0);
+  },
+);
 
 test(
   'phase6: pipeline with real models (requires model env vars)',

@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import type { EVAInput } from '../modules/eva/eva-placeholder';
 import { extract_prosody_features, isValidProsodyFeatures } from '../modules/eva/eva-placeholder';
+
+async function maybeSetEvaEnvFromBase(): Promise<void> {
+  if (typeof process.env.EVA_WAV2VEC2_ONNX_PATH === 'string' && process.env.EVA_WAV2VEC2_ONNX_PATH.trim().length > 0) return;
+
+  const base = process.env.MODEL_BASE_PATH ?? './models';
+  const candidate = path.resolve(base, 'eva', 'model.onnx');
+  if (fs.existsSync(candidate)) process.env.EVA_WAV2VEC2_ONNX_PATH = candidate;
+}
+
+void maybeSetEvaEnvFromBase();
 
 function hasEnv(name: string): boolean {
   const v = process.env[name];
@@ -10,6 +22,7 @@ function hasEnv(name: string): boolean {
 }
 
 test('eva wav2vec2: extract_prosody_features returns valid ProsodyFeatures (fallback-safe)', async () => {
+  await maybeSetEvaEnvFromBase();
   const input: EVAInput = {
     timestamp: 0,
     duration_ms: 2_000,
@@ -25,6 +38,7 @@ test('eva wav2vec2: extract_prosody_features returns valid ProsodyFeatures (fall
 });
 
 test('eva wav2vec2: uses configured ONNX model when EVA_WAV2VEC2_ONNX_PATH is set', { skip: !hasEnv('EVA_WAV2VEC2_ONNX_PATH') }, async () => {
+  await maybeSetEvaEnvFromBase();
   const input: EVAInput = {
     timestamp: 0,
     duration_ms: 2_000,

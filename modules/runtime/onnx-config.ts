@@ -24,13 +24,9 @@ function makeSessionKey(key: ONNXSessionKey): string {
 }
 
 async function tryRegisterCudaProvider(): Promise<boolean> {
-  try {
-    // Side-effect import: registers CUDA EP with onnxruntime-node if available.
-    await import('@onnxruntime-node/cuda');
-    return true;
-  } catch {
-    return false;
-  }
+  // Best-effort: some builds may register CUDA EP automatically.
+  // We do not hard-require any side-effect CUDA registration package.
+  return false;
 }
 
 async function getAvailableProviders(ort: ORTModule): Promise<string[]> {

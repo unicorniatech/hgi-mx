@@ -1,0 +1,6 @@
+onlyBuiltDependencies:
+  - argon2
+  - blake3
+  - esbuild
+  - onnxruntime-node
+  - protobufjs
