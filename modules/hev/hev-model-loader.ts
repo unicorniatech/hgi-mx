@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import type * as ortTypes from 'onnxruntime-node';
 
 import { ONNXRuntimeManager } from '../runtime/onnx-config';
+import { basicTokenize } from '../tokenizers/basic-tokenizer';
+import { encodeWordpieceBert, loadVocabFile } from '../tokenizers/vocab-tokenizer';
 
 export interface HEVDistilBertModelConfig {
   modelPath: string;
@@ -40,17 +42,8 @@ function softmax2(a: number, b: number): [number, number] {
   return [ea / s, eb / s];
 }
 
-function basicTokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
-}
-
 function estimateCoherence(text: string): number {
-  const tokens = basicTokenize(text);
+  const tokens = basicTokenize(text).map((t) => t.text);
   if (tokens.length === 0) return 0;
 
   const unique = new Set(tokens).size;
@@ -65,97 +58,6 @@ function estimateCoherence(text: string): number {
   const lengthScore = clamp01((tokens.length - 3) / 12);
 
   return clamp01(0.25 + 0.55 * uniqueRatio + 0.35 * lengthScore - 0.5 * repetitionPenalty);
-}
-
-function wordpieceTokenize(tokens: string[], vocab: Map<string, number>): string[] {
-  const out: string[] = [];
-
-  for (const token of tokens) {
-    if (vocab.has(token)) {
-      out.push(token);
-      continue;
-    }
-
-    const chars = Array.from(token);
-    let start = 0;
-    const subTokens: string[] = [];
-    let isBad = false;
-
-    while (start < chars.length) {
-      let end = chars.length;
-      let cur: string | null = null;
-
-      while (start < end) {
-        const piece = chars.slice(start, end).join('');
-        const candidate = start === 0 ? piece : `##${piece}`;
-        if (vocab.has(candidate)) {
-          cur = candidate;
-          break;
-        }
-        end -= 1;
-      }
-
-      if (cur === null) {
-        isBad = true;
-        break;
-      }
-
-      subTokens.push(cur);
-      start = end;
-    }
-
-    if (isBad) {
-      out.push('[UNK]');
-    } else {
-      out.push(...subTokens);
-    }
-  }
-
-  return out;
-}
-
-async function loadVocab(vocabPath: string): Promise<Map<string, number>> {
-  const content = await fs.readFile(vocabPath, 'utf8');
-  const lines = content.split(/\r?\n/);
-
-  const map = new Map<string, number>();
-  for (let i = 0; i < lines.length; i += 1) {
-    const tok = lines[i]?.trim();
-    if (!tok) continue;
-    if (!map.has(tok)) map.set(tok, map.size);
-  }
-
-  return map;
-}
-
-function encode(text: string, vocab: Map<string, number>, maxLength: number): { inputIds: BigInt64Array; attentionMask: BigInt64Array } {
-  const clsId = vocab.get('[CLS]') ?? 101;
-  const sepId = vocab.get('[SEP]') ?? 102;
-  const padId = vocab.get('[PAD]') ?? 0;
-  const unkId = vocab.get('[UNK]') ?? 100;
-
-  const tokens = wordpieceTokenize(basicTokenize(text), vocab);
-
-  const ids: number[] = [clsId];
-  for (const t of tokens) {
-    ids.push(vocab.get(t) ?? unkId);
-  }
-  ids.push(sepId);
-
-  const trimmed = ids.slice(0, Math.max(2, maxLength));
-
-  const padded = new Array<number>(maxLength).fill(padId);
-  const mask = new Array<number>(maxLength).fill(0);
-
-  for (let i = 0; i < Math.min(trimmed.length, maxLength); i += 1) {
-    padded[i] = trimmed[i];
-    mask[i] = 1;
-  }
-
-  return {
-    inputIds: BigInt64Array.from(padded.map((n) => BigInt(n))),
-    attentionMask: BigInt64Array.from(mask.map((n) => BigInt(n))),
-  };
 }
 
 export class HEVDistilBertModelLoader {
@@ -217,7 +119,7 @@ export class HEVDistilBertModelLoader {
       if (a === b) return this.session;
     }
 
-    this.vocab = await loadVocab(vocabPath);
+    this.vocab = await loadVocabFile(vocabPath);
 
     const session = await this.ortManager.getSession(modelPath, eps);
     this.session = session;
@@ -233,7 +135,7 @@ export class HEVDistilBertModelLoader {
     }
 
     const maxLength = this.sessionKey.maxLength;
-    const { inputIds, attentionMask } = encode(text, this.vocab, maxLength);
+    const { inputIds, attentionMask } = encodeWordpieceBert(text, this.vocab, maxLength);
 
     const ort = await import('onnxruntime-node');
 

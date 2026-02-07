@@ -8,7 +8,7 @@ para herramientas, ni prompts, ni notas temporales. Su propósito es servir como
 1. Punto de anclaje filosófico.
 2. Índice oficial del canon técnico.
 3. Árbol estructural para futuras versiones del sistema.
-4. Garantía histórica de coherencia entre EVA, ESS, BIPS, SHARDS y el Umbilical Mesh.
+4. Garantía histórica de coherencia entre EVA, AF, BIPS, SHARDS y el Umbilical Mesh.
 
 ---
 
@@ -62,7 +62,7 @@ Reglas estrictas:
 
 2. **Los cinco invariantes jamás pueden eliminarse:**
    - EVA no graba.
-   - ESS traduce intención con ética.
+   - La capa afectiva traduce intención con ética.
    - BIPS garantiza irreversibilidad.
    - Umbilical Mesh gobierna la reciprocidad.
    - Emo-Shards contienen emoción sin identidad.
@@ -94,7 +94,7 @@ ni instrucciones técnicas para módulos específicos.
 ## 5. Relación con el Código
 El canon define la intención, no la implementación.
 
-- EVA, ESS, BIPS, MOLIE, MeshNet y nodos deben derivarse causalmente del canon.  
+- EVA, AF, BIPS, MOLIE, MeshNet y nodos deben derivarse causalmente del canon.  
 - Los módulos en `/modules/**` son implementaciones vivas del canon,
   pero pueden mutar mientras respeten los invariantes.
 

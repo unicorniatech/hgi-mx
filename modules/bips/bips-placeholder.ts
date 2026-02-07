@@ -8,7 +8,6 @@
 //   and `/docs/protocols/bips-outline.md`.
 // - Keep changes atomic and versionable.
 
-import type { ESSIntent } from '../ess/ess-placeholder';
 import { HEVScore, isValidHEVScore, normalizeHEVScore } from '../hev/hev-placeholder';
 import { isValidMOLIEMap, MOLIEMap } from '../molie/molie-placeholder';
 import { hashContextualEnvelope } from './bips-hasher';
@@ -329,8 +328,6 @@ export function isValidEmoShard(shard: unknown): shard is EmoShard {
     isFiniteNumber(shard.timestamp)
   );
 }
-
-export type BIPSESSIntent = ESSIntent;
 
 export interface IrreversibilityEnvelope {
   shard_id: string;

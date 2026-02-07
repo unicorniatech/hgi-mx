@@ -29,7 +29,7 @@ TODO: definición conceptual, no técnica.
 ### 1.2 Propósito filosófico
 TODO: defensa por inexistencia, irreversibilidad absoluta.
 
-### 1.3 Relación con EVA, ESS, MOLIE
+### 1.3 Relación con EVA, capa afectiva, MOLIE
 TODO: orden de operaciones, dónde muere la identidad.
 
 ### 1.4 Contrato moral del sistema
@@ -77,7 +77,7 @@ TODO: demostración conceptual (no matemática formal todavía).
 SECCIÓN 4 — PSEUDOCÓDIGO DEL PIPELINE
 ────────────────────────────────────────────────────────────
 
-### 4.1 Pipeline EVA → BIPS → ESS
+### 4.1 Pipeline EVA → BIPS → capa afectiva
 TODO: flujo secuencial.
 
 ### 4.2 Pseudocódigo de transformaciones

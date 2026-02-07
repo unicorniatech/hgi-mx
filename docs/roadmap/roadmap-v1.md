@@ -35,19 +35,19 @@ TODO: lista de repos HGI-MX.
 TODO: nodos, ancianos, mesh básica.
 
 ────────────────────────────────────────────────────────────
-SECCIÓN 2 — Fase 1: EVA + ESS + BIPS funcionando localmente
+SECCIÓN 2 — Fase 1: EVA + capa afectiva + BIPS funcionando localmente
 ────────────────────────────────────────────────────────────
 
 ### 2.1 EVA-v1
 TODO: toques mínimos, extracción prosódica.
 
-### 2.2 ESS-v1
+### 2.2 Capa afectiva-v1
 TODO: estructura emocional → intención.
 
 ### 2.3 BIPS-v1
 TODO: pipeline de irreversibilidad.
 
-### 2.4 Integración EVA → ESS → BIPS
+### 2.4 Integración EVA → capa afectiva → BIPS
 TODO: flujos.
 
 ### 2.5 Primer Emo-Shard v1
@@ -123,7 +123,7 @@ TODO: reconstrucción semántica profunda.
 ### 6.2 Mesh Internacional
 TODO.
 
-### 6.3 EVA/ESS/HEV v3
+### 6.3 EVA/capa afectiva/HEV v3
 TODO.
 
 ### 6.4 Nodos embajadores

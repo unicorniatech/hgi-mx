@@ -258,13 +258,46 @@ export enum NodeType {
   personal = "personal",
   community = "community",
   elder = "elder",
+  eva = "eva",
+  ghost = "ghost",
+  purifier = "purifier",
+  founder = "founder",
 }
 
 const NODE_TYPE_TO_STRING: Record<NodeType, string> = {
   [NodeType.personal]: 'personal',
   [NodeType.community]: 'community',
   [NodeType.elder]: 'elder',
+  [NodeType.eva]: 'eva',
+  [NodeType.ghost]: 'ghost',
+  [NodeType.purifier]: 'purifier',
+  [NodeType.founder]: 'founder',
 };
+
+export const NODE_TYPE_WEIGHT: Readonly<Record<NodeType, number>> = Object.freeze({
+  [NodeType.founder]: 1.0,
+  [NodeType.elder]: 0.8,
+  [NodeType.purifier]: 0.6,
+  [NodeType.eva]: 0.4,
+  [NodeType.community]: 0.3,
+  [NodeType.personal]: 0.2,
+  [NodeType.ghost]: 0.01,
+});
+
+export function getNodeTypeWeight(nodeType: NodeType): number {
+  const w = NODE_TYPE_WEIGHT[nodeType];
+  return clampEthicalWeight(w);
+}
+
+export function isValidNodeTypeWeightMap(value: unknown): value is Record<string, number> {
+  if (!isRecord(value)) return false;
+  for (const [k, v] of Object.entries(value)) {
+    if (!isValidNodeType(k)) return false;
+    if (!isFiniteNumber(v)) return false;
+    if (v < MESH_SCORE_MIN || v > MESH_SCORE_MAX) return false;
+  }
+  return true;
+}
 
 const STRING_TO_NODE_TYPE: Readonly<Record<string, NodeType>> = Object.freeze(
   Object.fromEntries(Object.entries(NODE_TYPE_TO_STRING).map(([key, value]) => [value, key as NodeType])) as Record<
@@ -306,6 +339,70 @@ export function stringToNodeType(value: string): NodeType {
  */
 export function isValidNodeType(t: string): t is NodeType {
   return STRING_TO_NODE_TYPE[t] !== undefined;
+}
+
+export interface MeshEnvConfig {
+  node_type: NodeType;
+  listen_port: number;
+  bootstrap_nodes: string[];
+}
+
+function parseListenPortEnv(raw: string | undefined): number {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s.length === 0) return 9001;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0 || n >= 65536) {
+    throw createMeshValidationError(`Invalid HGI_LISTEN_PORT: ${s}`);
+  }
+  return Math.floor(n);
+}
+
+function parseBootstrapNodesEnv(raw: string | undefined): string[] {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s.length === 0) return [];
+
+  const nodes = s
+    .split(/[\s,]+/g)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0);
+
+  for (const ma of nodes) {
+    if (!ma.startsWith('/')) {
+      throw createMeshValidationError(`Invalid HGI_BOOTSTRAP_NODES entry (expected multiaddr): ${ma}`);
+    }
+    if (!ma.includes('/p2p/')) {
+      throw createMeshValidationError(`Invalid HGI_BOOTSTRAP_NODES entry (missing /p2p/ peer id): ${ma}`);
+    }
+  }
+
+  return nodes;
+}
+
+export function loadMeshEnvConfig(): MeshEnvConfig {
+  const rawType = typeof process.env.HGI_NODE_TYPE === 'string' ? process.env.HGI_NODE_TYPE.trim() : '';
+  const nodeTypeString = rawType.length > 0 ? rawType : 'elder';
+
+  if (!isValidNodeType(nodeTypeString)) {
+    throw createMeshValidationError(
+      `Invalid HGI_NODE_TYPE: ${nodeTypeString}. Allowed: elder|eva|ghost|purifier|founder`,
+    );
+  }
+
+  const node_type = stringToNodeType(nodeTypeString);
+
+  const weight = NODE_TYPE_WEIGHT[node_type];
+  if (!isFiniteNumber(weight)) {
+    throw createMeshValidationError(`Invalid NODE_TYPE_WEIGHT for node type: ${nodeTypeString}`);
+  }
+
+  const listen_port = parseListenPortEnv(process.env.HGI_LISTEN_PORT);
+  const bootstrap_nodes = parseBootstrapNodesEnv(process.env.HGI_BOOTSTRAP_NODES);
+
+  return {
+    node_type,
+    listen_port,
+    bootstrap_nodes,
+  };
 }
 
 export interface MeshNodeInfo {
@@ -357,6 +454,10 @@ export async function discover_peers(): Promise<MeshNodeInfo[]> {
   // TODO(HGI): Discover mesh peers
   // Reference: /docs/protocols/meshnet-outline.md (Section 3: Nodos)
   throw new Error("Not implemented");
+}
+
+export async function publishEmoShard(topic: string, shard: EmoShard): Promise<boolean> {
+  return meshLibp2pAdapter.publishEmoShard(topic, shard);
 }
 
 /**

@@ -7,8 +7,40 @@
 // - Create tasks that reference `/docs/core/hgi-core-v0.2-outline.md`.
 // - Keep changes atomic and versionable.
 
-import { ESSIntent, isValidESSIntent } from '../ess/ess-placeholder';
 import { hevDistilBertModelLoader } from './hev-model-loader';
+
+export type HGIIntent = {
+   semantic_core: string;
+   emotional_context: {
+      primary_emotion: string;
+      secondary_emotions: string[];
+      intensity: number;
+      valence: number;
+   };
+   clarity_score: number;
+};
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function isValidHGIIntent(value: unknown): value is HGIIntent {
+   if (!isPlainObject(value)) return false;
+   const ec = value.emotional_context;
+   if (!isPlainObject(ec)) return false;
+   return (
+      typeof value.semantic_core === 'string' &&
+      typeof ec.primary_emotion === 'string' &&
+      Array.isArray(ec.secondary_emotions) &&
+      ec.secondary_emotions.every((x) => typeof x === 'string') &&
+      typeof ec.intensity === 'number' &&
+      Number.isFinite(ec.intensity) &&
+      typeof ec.valence === 'number' &&
+      Number.isFinite(ec.valence) &&
+      typeof value.clarity_score === 'number' &&
+      Number.isFinite(value.clarity_score)
+   );
+}
 
 export enum HEVErrorCode {
    VALIDATION_ERROR = 'VALIDATION_ERROR',
@@ -121,10 +153,6 @@ export function createHEVRangeError(
    );
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
    return isPlainObject(value);
 }
@@ -209,11 +237,10 @@ export interface HEVScore {
    vulnerability_score: number; // 0.0 - 1.0
    toxicity_score: number; // 0.0 - 1.0
    ethical_color: EthicalGradient;
-   degradedMode?: boolean;
    // TODO(HGI): STRUCTURE ONLY
    // TODO(HGI): NO SCORING LOGIC
    // Reference: /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
- }
+}
 
 /**
  * Type guard for {@link HEVScore}.
@@ -226,7 +253,6 @@ export function isValidHEVScore(score: unknown): score is HEVScore {
    if (!isRecord(score)) return false;
 
    const ethicalColor = (score as Record<string, unknown>).ethical_color;
-   const degraded = (score as Record<string, unknown>).degradedMode;
 
    return (
       isFiniteNumber((score as Record<string, unknown>).clarity_score) &&
@@ -234,8 +260,7 @@ export function isValidHEVScore(score: unknown): score is HEVScore {
       isFiniteNumber((score as Record<string, unknown>).vulnerability_score) &&
       isFiniteNumber((score as Record<string, unknown>).toxicity_score) &&
       typeof ethicalColor === 'string' &&
-      isValidEthicalGradient(ethicalColor) &&
-      (degraded === undefined || typeof degraded === 'boolean')
+      isValidEthicalGradient(ethicalColor)
    );
 }
 
@@ -282,7 +307,7 @@ export function validateHEVScore(score: unknown): HEVValidationResult {
    return { ok: errors.length === 0, errors };
 }
 
-function buildHEVScoreStub(intent: ESSIntent): HEVScore {
+function buildHEVScoreStub(intent: HGIIntent): HEVScore {
    const clarity = clampHEVMetric(0.8);
    const coherence = clampHEVMetric(0.7);
    const vulnerability = clampHEVMetric(intent.emotional_context.intensity);
@@ -313,40 +338,40 @@ export function normalizeHEVScore(score: HEVScore): HEVScore {
    };
 }
 
-export async function compute_ethical_gradient(intent: ESSIntent): Promise<EthicalGradient> {
+export async function compute_ethical_gradient(intent: HGIIntent): Promise<EthicalGradient> {
    // TODO(HGI): STRUCTURE ONLY
    // TODO(HGI): NO SCORING LOGIC
    // TODO(HGI): Compute ethical gradient (color spectrum) for intent
    // Reference: /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
    void intent;
    throw new Error("Not implemented");
- }
+}
 
- /**
-  * Evaluate an {@link ESSIntent} and produce a deterministic {@link HEVScore}.
-  *
-  * Structure-only placeholder:
-  * - Validates the incoming intent using {@link isValidESSIntent}
-  * - Returns a deterministic score scaffold
-  * - Clamps all metric fields using {@link clampHEVMetric}
-  *
-  * No ethical reasoning, scoring computation, or policy logic is implemented.
-  *
-  * Reference: /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
-  *
-  * @param intent - Upstream ESS intent.
-  * @returns A validated {@link HEVScore}.
-  * @throws {HEVError} When input or output validation fails.
-  */
-export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
+/**
+ * Evaluate an intent payload and produce a deterministic {@link HEVScore}.
+ *
+ * Structure-only placeholder:
+ * - Validates the incoming intent using {@link isValidHGIIntent}
+ * - Returns a deterministic score scaffold
+ * - Clamps all metric fields using {@link clampHEVMetric}
+ *
+ * No ethical reasoning, scoring computation, or policy logic is implemented.
+ *
+ * Reference: /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
+ *
+ * @param intent - Upstream intent.
+ * @returns A validated {@link HEVScore}.
+ * @throws {HEVError} When input or output validation fails.
+ */
+export async function hev_evaluate(intent: HGIIntent): Promise<HEVScore> {
    // TODO(HGI): STRUCTURE ONLY
    // TODO(HGI): NO SCORING LOGIC
    // TODO(HGI): Implement ethical evaluation and return HEVScore
    // Reference: /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
-   if (!isValidESSIntent(intent)) {
+   if (!isValidHGIIntent(intent)) {
       throw createHEVValidationError(
          HEVErrorCode.PIPELINE_INCOMPATIBLE,
-         'Invalid ESSIntent input for HEV evaluation.',
+         'Invalid intent input for HEV evaluation.',
       );
    }
 
@@ -354,7 +379,7 @@ export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
    if (!Number.isFinite(intensity) || intensity < 0 || intensity > 1) {
       throw createHEVValidationError(
          HEVErrorCode.RANGE_VIOLATION,
-         'ESSIntent emotional_context.intensity out of range (expected 0..1).',
+         'intent emotional_context.intensity out of range (expected 0..1).',
          { field: 'emotional_context.intensity', value: intensity, min: 0, max: 1 },
       );
    }
@@ -363,7 +388,7 @@ export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
    if (!Number.isFinite(valence) || valence < -1 || valence > 1) {
       throw createHEVValidationError(
          HEVErrorCode.RANGE_VIOLATION,
-         'ESSIntent emotional_context.valence out of range (expected -1..1).',
+         'intent emotional_context.valence out of range (expected -1..1).',
          { field: 'emotional_context.valence', value: valence, min: -1, max: 1 },
       );
    }
@@ -372,7 +397,7 @@ export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
    if (!Number.isFinite(clarityScore) || clarityScore < 0 || clarityScore > 1) {
       throw createHEVValidationError(
          HEVErrorCode.RANGE_VIOLATION,
-         'ESSIntent clarity_score out of range (expected 0..1).',
+         'intent clarity_score out of range (expected 0..1).',
          { field: 'clarity_score', value: clarityScore, min: 0, max: 1 },
       );
    }
@@ -387,16 +412,10 @@ export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
 
    let toxicityScore = clampHEVMetric(1 - clampHEVMetric(intent.clarity_score));
    let coherenceScore = clampHEVMetric(intent.clarity_score);
-   let degradedMode = false;
 
-   try {
-      const out = await hevDistilBertModelLoader.infer(text, { executionProviders: ['cuda', 'cpu'] });
-      toxicityScore = clampHEVMetric(out.toxicityScore);
-      coherenceScore = clampHEVMetric(0.65 * clampHEVMetric(intent.clarity_score) + 0.35 * clampHEVMetric(out.coherenceScore));
-   } catch (err) {
-      console.warn('HEV DistilBERT infer failed - fallback active:', err);
-      degradedMode = true;
-   }
+   const out = await hevDistilBertModelLoader.infer(text, { executionProviders: ['cuda', 'cpu'] });
+   toxicityScore = clampHEVMetric(out.toxicityScore);
+   coherenceScore = clampHEVMetric(0.65 * clampHEVMetric(intent.clarity_score) + 0.35 * clampHEVMetric(out.coherenceScore));
 
    const score: HEVScore = {
       clarity_score: clampHEVMetric(intent.clarity_score),
@@ -404,7 +423,6 @@ export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
       vulnerability_score: clampHEVMetric(intent.emotional_context.intensity),
       toxicity_score: toxicityScore,
       ethical_color: EthicalGradient.GREEN_SAFE,
-      degradedMode,
    };
 
    const normalized = normalizeHEVScore(score);
@@ -428,34 +446,34 @@ export async function hev_evaluate(intent: ESSIntent): Promise<HEVScore> {
    }
 
    return colored;
- }
+}
 
- /**
-  * Pipeline adapter entry for HEV.
-  *
-  * Structure-only adapter:
-  * - Validates an unknown payload as an {@link ESSIntent}
-  * - Normalizes by cloning the validated structure
-  * - Calls {@link hev_evaluate}
-  * - Validates and normalizes the returned {@link HEVScore}
-  *
-  * Reference:
-  * - /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
-  * - /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
-  *
-  * @param input - Unknown upstream pipeline payload.
-  * @returns A validated {@link HEVScore}.
-  * @throws {HEVError} When input or output validation fails.
-  */
+/**
+ * Pipeline adapter entry for HEV.
+ *
+ * Structure-only adapter:
+ * - Validates an unknown payload as an intent payload
+ * - Normalizes by cloning the validated structure
+ * - Calls {@link hev_evaluate}
+ * - Validates and normalizes the returned {@link HEVScore}
+ *
+ * Reference:
+ * - /docs/core/hgi-core-v0.2-outline.md (Section III: Arquitectura General)
+ * - /docs/core/hgi-core-v0.2-outline.md (Section IX: Consenso Ético)
+ *
+ * @param input - Unknown upstream pipeline payload.
+ * @returns A validated {@link HEVScore}.
+ * @throws {HEVError} When input or output validation fails.
+ */
 export async function hev_pipeline_entry(input: unknown): Promise<HEVScore> {
-   if (!isValidESSIntent(input)) {
+   if (!isValidHGIIntent(input)) {
       throw createHEVValidationError(
          HEVErrorCode.PIPELINE_INCOMPATIBLE,
-         'Invalid ESSIntent input for HEV pipeline entry.',
+         'Invalid intent input for HEV pipeline entry.',
       );
    }
 
-   const normalizedIntent: ESSIntent = {
+   const normalizedIntent: HGIIntent = {
       semantic_core: input.semantic_core,
       emotional_context: {
          primary_emotion: input.emotional_context.primary_emotion,

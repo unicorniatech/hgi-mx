@@ -25,7 +25,7 @@ II. LOS CINCO PILARES DEL SISTEMA (INVARIANTES)
 - Entropía prosódica  
 - Activación por energía emocional  
 
-2.2 ESS — Emotional Synthesis System  
+2.2 AF — Affective Synthesis Layer  
 - Traducción emoción → intención → ética  
 - Reconstrucción de claridad moral  
 
@@ -60,7 +60,7 @@ IV. MODELO EMOCIONAL SINTÉTICO
 4.3 Intención narrativa  
 4.4 Disonancia cognitiva  
 4.5 Señales de vulnerabilidad  
-4.6 Cómo ESS sintetiza emoción sin voz real  
+4.6 Cómo la capa afectiva sintetiza emoción sin voz real  
 
 ────────────────────────────────────────────────────────────
 V. DISEÑO DE EMO-SHARDS (DETALLE EXPANDIDO)
@@ -88,7 +88,7 @@ VII. PROTOCOLO UMBILICAL UL-X (CAPAS COMPLETAS)
 ────────────────────────────────────────────────────────────
 
 C1 — Sensorial (EVA)  
-C2 — Afectiva (ESS preprocesado)  
+C2 — Afectiva (preprocesado afectivo)  
 C3 — Cognitiva (modelo local)  
 C4 — Comunitaria (publicación ética)  
 C5 — Sintética (procesamiento mestizo)  

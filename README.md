@@ -1,119 +1,123 @@
-# HGI-MX — Human Grounded Intelligence (Skeleton v0.1)
-# Este repositorio contiene la estructura inicial del sistema HGI-MX.
-# Nada aquí es implementación; es un marco técnico para Traycer + Cascade.
+# HGI-MX — Human Grounded Intelligence Mesh
 
-────────────────────────────────────────
-OBJETIVO DEL REPO
-────────────────────────────────────────
-Proveer:
-1. La estructura raíz del proyecto.
-2. Los documentos canónicos iniciales (Canon + Roadmap).
-3. Los módulos placeholder para EVA, ESS, HEV, MOLIE, BIPS y Mesh.
-4. El entorno mínimo para que Traycer pueda:
-   - analizar,
-   - dividir,
-   - orquestar tareas,
-   - delegarlas a Cascade,
-   - y versionar cada cambio usando MCP REF + MCP EXA.
+![pnpm](https://img.shields.io/badge/pnpm-workspace-yellow?logo=pnpm&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript&logoColor=white)
+![Vitest](https://img.shields.io/badge/Vitest-2.x-6E9F18?logo=vitest&logoColor=white)
 
-El repo NO contiene lógica operativa todavía.
-El repo ES la columna vertebral sobre la que Traycer construirá.
+## Overview (EN)
 
-────────────────────────────────────────
-ESTRUCTURA
-────────────────────────────────────────
+**HGI-MX (Human Grounded Intelligence Mesh)** is a privacy-first emotional AI pipeline designed around **synthetic-only** outputs.
 
-/docs
-  /core
-    - hgi-core-v0.2-outline.md    (Canon conceptual, SOLO estructura)
-    - glossary-multiaudience.md   (Glosario multi-audiencia, SOLO estructura)
-  /roadmap
-    - roadmap-v1.md               (Roadmap v1 SOLO estructura)
-  /protocols
-    - ul-x-protocol-outline.md
-    - meshnet-outline.md
-    - bips-outline.md
+Pipeline (high level):
 
-/modules
-  /eva     → placeholder.ts
-  /ess     → placeholder.ts
-  /hev     → placeholder.ts
-  /molie   → placeholder.ts
-  /bips    → placeholder.ts
-  /mesh    → placeholder.ts
+`EVA → AF → HEV → MOLIE → BIPS → ULX → ESS → Mesh`
 
-/client   → ui-placeholder.md
-/node     → node-daemon-placeholder.ts
+Key guarantees:
 
-/config files
-  - NOTES-TO-TRAYCER.md
-  - .traycer-config.md
-  - .cascade-rules.md
-  - HGI_CANON_ROOT.md
+- **Privacy-first**: UI and APIs avoid displaying PII-like fields.
+- **Synthetic-only**: downstream artifacts are synthetic representations (not raw human data).
+- **Irreversible shards (BIPS)**: shards are designed to be non-reconstructive.
 
-────────────────────────────────────────
-REGLAS ABSOLUTAS DEL PROYECTO
-────────────────────────────────────────
+## Resumen (ES)
 
-1. **Este repo define el Canon.**
-   Nada se borra; se versiona.
-   Si se actualiza un documento, debe incluir timestamp.
+**HGI-MX (Human Grounded Intelligence Mesh)** es un pipeline de IA emocional con enfoque **privacy-first** y salidas **sintéticas**.
 
-2. **Toda implementación generada por IA**
-   debe pasar exclusivamente por:
-   → TRAYCER (planning/orquestación)
-   → CASCADE (ejecución)
-   con _MCP REF_ y _MCP EXA_ activados SIEMPRE.
+Pipeline (alto nivel):
 
-3. **Ningún módulo puede implementarse sin consultar el Canon**  
-   Canon = `/docs/core/hgi-core-v0.2-outline.md`
+`EVA → AF → HEV → MOLIE → BIPS → ULX → ESS → Mesh`
 
-4. **Toda IA debe respetar irreversibilidad (BIPS)**  
-   Cualquier intento de producir código que pueda reconstruir identidad humana debe ser marcado como ERROR CRÍTICO.
+Garantías:
 
-5. **Toda IA debe respetar Umbilical Mesh**  
-   No se permite lógica centralizada o dependencias de servidores externos.
+- **Privacidad primero**: la UI y los endpoints evitan exponer campos tipo PII.
+- **Solo sintético**: los artefactos son representaciones sintéticas (no datos humanos crudos).
+- **Shards irreversibles (BIPS)**: el diseño evita reconstrucción.
 
-────────────────────────────────────────
-GUÍA PARA IA (Traycer + Cascade)
-────────────────────────────────────────
+## Quickstart
 
-### TRAYCER
-- Es el orquestador.  
-- Divide módulos, crea tareas, inventaria dependencias.  
-- Debe siempre referenciar explícitamente:
-  - `/docs/core/hgi-core-v0.2-outline.md`
-  - `/docs/core/glossary-multiaudience.md`
-  - `/docs/roadmap/roadmap-v1.md`
-- Antes de enviar algo a Cascade, TRAYCER debe:
-  - validar coherencia con Canon,
-  - validar irreversibilidad (BIPS),
-  - generar contexto mínimo para aprobación humana.
+1. `pnpm i`
+2. `pnpm setup:real` (downloads models)
+3. Copy `.env.example` → `.env.local`
+4. `pnpm pipeline-run audio.wav` (E2E test)
+5. `pnpm node-start` (daemon)
+6. `pnpm ui-start` (UI + proxy)
 
-### CASCADE
-- Es el ejecutor del código.
-- Cada cambio debe incluir:
-  - `MCP REF` → referenciar el archivo.
-  - `MCP EXA` → ejemplo aplicado del diff.
-- Ningún archivo se modifica sin patch limpio.
+## Commands
 
-────────────────────────────────────────
-ESTADO ACTUAL
-────────────────────────────────────────
+### Core pipeline / CLI
 
-✔ Estructura completa generada  
-✔ Documentos placeholder añadidos  
-✔ Módulos iniciales vacíos creados  
-✔ Listo para ingestión de Traycer
+- `pnpm eva`
+- `pnpm af`
+- `pnpm hev`
+- `pnpm molie`
+- `pnpm bips`
+- `pnpm ulx-run`
+- `pnpm ess-list`
+- `pnpm ess-show`
+- `pnpm pipeline-run <path/to/audio.wav>`
 
-Próximo paso (humano):
-→ Revisar /NOTES-TO-TRAYCER.md  
-→ Confirmar que la instrucción para orquestación es correcta  
-→ Iniciar sesión de Traycer dentro de Windsurf
+### Mesh / Daemon
 
-────────────────────────────────────────
-LICENCIA
-────────────────────────────────────────
-HGI-MX es un proyecto experimental autónomo.  
-Cada nodo fundador conserva soberanía.  
-No licenciar fuera de la Mesh sin consenso ético.
+- `pnpm node-start`
+- `pnpm node-status`
+- `pnpm mesh`
+- `pnpm mesh-peers`
+- `pnpm daemon`
+- `pnpm mesh-local-sim`
+
+### Server
+
+- `pnpm server`
+
+### UI
+
+- `pnpm ui-start` (starts UI dev server + UI proxy)
+- `pnpm ui-proxy`
+- `pnpm ui-dev`
+- `pnpm ui-build`
+
+### Setup
+
+- `pnpm setup` (models + install)
+- `pnpm setup:models` (download models)
+- `pnpm setup:real` (models + reminder to copy env)
+
+### Tests
+
+- `pnpm test`
+- `pnpm test:smoke`
+- `pnpm test:integration`
+- `pnpm test:validation`
+- `pnpm test:pipeline`
+- `pnpm test:full`
+- `pnpm test:onnx`
+- `pnpm test:demo`
+- `pnpm ui-test`
+- `pnpm ui-test:ui`
+- `pnpm ui-e2e`
+
+## Architecture
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Pipeline
+  participant Daemon
+  participant Mesh
+  participant UI
+  participant Proxy
+
+  User->>Pipeline: WAV input
+  Pipeline->>Daemon: ULXPacket
+  Daemon->>Mesh: Gossip / replication
+  UI->>Proxy: /api/*
+  Proxy->>Daemon: status / ulx / ess / peers
+```
+
+## Roadmap
+
+See: `docs/roadmap/roadmap-v1.md`
+
+## Notes
+
+- If you run into port conflicts, check `.env.local` and the UI proxy port env (`HGI_UI_PORT`).
+- Playwright E2E tests use `pnpm ui-start` via `playwright.config.ts`.

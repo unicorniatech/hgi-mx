@@ -90,7 +90,7 @@ export function eva_vectorize(input: EVAInput): EVAVector {
 
 Ejemplo de instrucción inválida:
 - “Implementa EVA.”
-- “Crea el módulo ESS completo de cero.”
+- “Crea el módulo de capa afectiva completo de cero.”
 
 Traycer siempre debe dar contexto, referencias, estructura y archivos específicos.
 
@@ -165,7 +165,7 @@ Traycer puede crear tareas que:
 - dividan tareas grandes en subtareas pequeñas.
 
 Traycer **NO** puede crear tareas que:
-- implementen EVA, ESS, HEV, MOLIE o BIPS a nivel real,
+- implementen EVA, AF, HEV, MOLIE o BIPS a nivel real,
 - manejen audio,
 - manejen biometría,
 - calculen hashing real,
@@ -202,7 +202,7 @@ Ejemplo:
 TASK #012 — Crear interfaces base para HEV Engine
 DEPENDENCIAS:
 	•	EVA vector structure
-	•	ESS intention structure
+	•	AF intention structure
 MCP REF:
 	•	/modules/hev/hev-placeholder.ts
 MCP EXA:

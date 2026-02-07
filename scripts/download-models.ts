@@ -12,7 +12,8 @@ type DownloadSpec = {
   description: string;
 };
 
-const ROOT = path.resolve(process.cwd(), 'models');
+const ROOT = path.resolve('.', 'models');
+const BASE = path.resolve('.');
 
 function log(msg: string): void {
   // Keep logs simple and greppable.
@@ -38,13 +39,13 @@ async function downloadToFile(spec: DownloadSpec): Promise<void> {
   await fse.ensureDir(path.dirname(spec.outPath));
 
   if (await fileExistsNonEmpty(spec.outPath)) {
-    log(`skip (exists): ${spec.description} -> ${path.relative(process.cwd(), spec.outPath)}`);
+    log(`skip (exists): ${spec.description} -> ${path.relative(BASE, spec.outPath)}`);
     return;
   }
 
   log(`download: ${spec.description}`);
   log(`  from: ${spec.url}`);
-  log(`  to:   ${path.relative(process.cwd(), spec.outPath)}`);
+  log(`  to:   ${path.relative(BASE, spec.outPath)}`);
 
   const res = await fetch(spec.url);
   if (!res.ok || res.body === null) {
@@ -83,7 +84,7 @@ async function downloadToFile(spec: DownloadSpec): Promise<void> {
         const pct = Math.floor((received / total) * 100);
         if (pct !== lastLoggedPct && pct % 10 === 0) {
           lastLoggedPct = pct;
-          log(`  progress: ${pct}%`);
+          log(`  pct: ${pct}%`);
         }
       }
     });
@@ -103,6 +104,20 @@ async function writeJsonIfMissing(outPath: string, value: unknown): Promise<void
   await fse.ensureDir(path.dirname(outPath));
   if (await fileExistsNonEmpty(outPath)) return;
   await fs.writeFile(outPath, JSON.stringify(value, null, 2));
+}
+
+async function listFilesRecursive(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      out.push(...(await listFilesRecursive(p)));
+    } else if (e.isFile()) {
+      out.push(p);
+    }
+  }
+  return out;
 }
 
 async function listHfFiles(repoId: string): Promise<string[]> {
@@ -127,11 +142,10 @@ async function main(): Promise<void> {
   await fse.ensureDir(ROOT);
 
   const evaDir = path.join(ROOT, 'eva');
-  const essDir = path.join(ROOT, 'ess');
   const hevDir = path.join(ROOT, 'hev');
   const molieDir = path.join(ROOT, 'molie');
 
-  await Promise.all([fse.ensureDir(evaDir), fse.ensureDir(essDir), fse.ensureDir(hevDir), fse.ensureDir(molieDir)]);
+  await Promise.all([fse.ensureDir(evaDir), fse.ensureDir(hevDir), fse.ensureDir(molieDir)]);
 
   // EVA
   await downloadToFile({
@@ -152,24 +166,12 @@ async function main(): Promise<void> {
     description: 'EVA wav2vec2 config.json',
   });
 
-  // ESS (placeholder model + dummy tokenizer)
-  await downloadToFile({
-    url: 'https://github.com/onnx/models/raw/main/validated/vision/body_analysis/darknet/pose_estimation_2d/resnet50.onnx',
-    outPath: path.join(essDir, 'model.onnx'),
-    description: 'ESS sample ONNX model (resnet50.onnx from ONNX zoo)',
-  });
-
-  await writeJsonIfMissing(path.join(essDir, 'tokenizer.json'), {
-    kind: 'dummy',
-    note: 'ESS MLP placeholder tokenizer. Replace with real regressor assets.',
-  });
-
   // HEV
   // Required by request: model.quant.onnx + tokenizer. We attempt common tokenizer filenames when present.
   await downloadToFile({
     url: 'https://huggingface.co/gravitee-io/distilbert-multilingual-toxicity-classifier/resolve/main/model.quant.onnx',
-    outPath: path.join(hevDir, 'model.quant.onnx'),
-    description: 'HEV distilbert toxicity model.quant.onnx',
+    outPath: path.join(hevDir, 'model.onnx'),
+    description: 'HEV distilbert toxicity model.onnx',
   });
 
   // Best-effort tokenizer assets.
@@ -199,12 +201,31 @@ async function main(): Promise<void> {
     }
   }
 
+  // Create stable alias paths for env wiring.
+  // The upstream repo may publish model files under long names; the loader expects a single ONNX path.
+  // We expose models/molie/model.onnx as a stable entrypoint.
+  const molieAlias = path.join(molieDir, 'model.onnx');
+  if (!(await fileExistsNonEmpty(molieAlias))) {
+    const files = (await listFilesRecursive(molieDir)).filter((p) => p.toLowerCase().endsWith('.onnx'));
+    const candidates = files
+      .filter((p) => path.resolve(p) !== path.resolve(molieAlias))
+      .sort((a, b) => a.localeCompare(b));
+
+    const chosen = candidates[0] ?? null;
+    if (chosen !== null) {
+      await fse.ensureDir(path.dirname(molieAlias));
+      await fs.copyFile(chosen, molieAlias);
+      log(`alias: MOLIE model.onnx -> ${path.relative(BASE, chosen)}`);
+    } else {
+      log('warn: no MOLIE .onnx files found to alias as models/molie/model.onnx');
+    }
+  }
+
   // Helpful output for env wiring.
   log('---');
   log('Suggested env vars:');
   log(`  EVA_WAV2VEC2_ONNX_PATH=${path.join(evaDir, 'model.onnx')}`);
-  log(`  ESS_MLP_ONNX_PATH=${path.join(essDir, 'model.onnx')}`);
-  log(`  HEV_DISTILBERT_ONNX_PATH=${path.join(hevDir, 'model.quant.onnx')}`);
+  log(`  HEV_DISTILBERT_ONNX_PATH=${path.join(hevDir, 'model.onnx')}`);
   if (await fileExistsNonEmpty(path.join(hevDir, 'vocab.txt'))) {
     log(`  HEV_DISTILBERT_VOCAB_PATH=${path.join(hevDir, 'vocab.txt')}`);
   } else if (await fileExistsNonEmpty(path.join(hevDir, 'tokenizer.json'))) {
@@ -212,19 +233,18 @@ async function main(): Promise<void> {
   }
 
   // MOLIE loader expects an ONNX path + vocab path in this repo implementation; Phi-3 layout varies.
-  log(`  MOLIE_PHI3_ONNX_PATH=<set to the downloaded .onnx under ${path.relative(process.cwd(), molieDir)}>`);
+  log(`  MOLIE_PHI3_ONNX_PATH=${path.join(molieDir, 'model.onnx')}`);
   log(`  MOLIE_PHI3_VOCAB_PATH=<set to vocab.txt if present>`);
 
   // Print a quick SHA summary (best-effort).
   const important = [
     path.join(evaDir, 'model.onnx'),
-    path.join(essDir, 'model.onnx'),
-    path.join(hevDir, 'model.quant.onnx'),
+    path.join(hevDir, 'model.onnx'),
   ];
   for (const p of important) {
     if (await fileExistsNonEmpty(p)) {
       const digest = await sha256File(p);
-      log(`sha256 ${path.relative(process.cwd(), p)} = ${digest}`);
+      log(`sha256 ${path.relative(BASE, p)} = ${digest}`);
     }
   }
 
@@ -234,5 +254,4 @@ async function main(): Promise<void> {
 main().catch((err) => {
   // eslint-disable-next-line no-console
   console.error('[setup:models] failed:', err);
-  process.exitCode = 1;
 });

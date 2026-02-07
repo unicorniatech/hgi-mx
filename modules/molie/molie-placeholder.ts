@@ -7,8 +7,53 @@
 // - Create tasks that reference `/docs/core/hgi-core-v0.2-outline.md`.
 // - Keep changes atomic and versionable.
 
-import { ESSIntent, clampIntensity, clampValence, isValidESSIntent } from '../ess/ess-placeholder';
 import { moliePhi3ModelLoader } from './molie-model-loader';
+
+export type HGIIntent = {
+  semantic_core: string;
+  emotional_context: {
+    primary_emotion: string;
+    secondary_emotions: string[];
+    intensity: number;
+    valence: number;
+  };
+  clarity_score: number;
+};
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function clampToRange(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampIntensity(intensity: number): number {
+  return clampToRange(intensity, 0, 1);
+}
+
+function clampValence(valence: number): number {
+  return clampToRange(valence, -1, 1);
+}
+
+export function isValidHGIIntent(value: unknown): value is HGIIntent {
+  if (!isPlainObject(value)) return false;
+  const ec = value.emotional_context;
+  if (!isPlainObject(ec)) return false;
+  return (
+    typeof value.semantic_core === 'string' &&
+    typeof ec.primary_emotion === 'string' &&
+    Array.isArray(ec.secondary_emotions) &&
+    ec.secondary_emotions.every((x) => typeof x === 'string') &&
+    typeof ec.intensity === 'number' &&
+    Number.isFinite(ec.intensity) &&
+    typeof ec.valence === 'number' &&
+    Number.isFinite(ec.valence) &&
+    typeof value.clarity_score === 'number' &&
+    Number.isFinite(value.clarity_score)
+  );
+}
 
 /**
  * Narrow an `unknown` value to a plain object record.
@@ -402,13 +447,13 @@ export interface MOLIEMap {
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
 }
 
-export async function extract_semantic_clusters(intent: ESSIntent): Promise<SemanticCluster[]> {
+export async function extract_semantic_clusters(intent: HGIIntent): Promise<SemanticCluster[]> {
   // TODO(HGI): STRUCTURE ONLY
   // TODO(HGI): NO SEMANTIC LOGIC
-  // TODO(HGI): Extract semantic clusters from ESS intent
+  // TODO(HGI): Extract semantic clusters from intent
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
-  if (!isValidESSIntent(intent)) {
-    throw createMOLIEValidationError('Invalid ESSIntent input for MOLIE semantic cluster extraction.');
+  if (!isValidHGIIntent(intent)) {
+    throw createMOLIEValidationError('Invalid intent input for MOLIE semantic cluster extraction.');
   }
 
   const text = [
@@ -422,29 +467,23 @@ export async function extract_semantic_clusters(intent: ESSIntent): Promise<Sema
     .filter((s) => typeof s === 'string' && s.trim().length > 0)
     .join(' ');
 
-  let weights: readonly number[] | null = null;
-
-  try {
-    weights = await moliePhi3ModelLoader.inferClusterWeights(text, { executionProviders: ['cuda', 'cpu'] });
-  } catch (err) {
-    console.warn('MOLIE Phi-3 infer failed - fallback active:', err);
-  }
+  const weights = await moliePhi3ModelLoader.inferClusterWeights(text, { executionProviders: ['cuda', 'cpu'] });
 
   const clusters: SemanticCluster[] = [
     {
       id: 'cluster_alpha',
       node_ids: [],
-      cluster_weight: clampClusterWeight(weights?.[0] ?? 0.5),
+      cluster_weight: clampClusterWeight(weights[0] ?? 0.5),
     },
     {
       id: 'cluster_beta',
       node_ids: [],
-      cluster_weight: clampClusterWeight(weights?.[1] ?? 0.75),
+      cluster_weight: clampClusterWeight(weights[1] ?? 0.75),
     },
     {
       id: 'cluster_gamma',
       node_ids: [],
-      cluster_weight: clampClusterWeight(weights?.[2] ?? 0.25),
+      cluster_weight: clampClusterWeight(weights[2] ?? 0.25),
     },
   ];
 
@@ -471,14 +510,14 @@ export async function extract_semantic_clusters(intent: ESSIntent): Promise<Sema
   return normalized;
 }
 
-export async function molie_transform(essOutput: ESSIntent): Promise<MOLIEMap> {
+export async function molie_transform(intentOutput: HGIIntent): Promise<MOLIEMap> {
   // TODO(HGI): STRUCTURE ONLY
   // TODO(HGI): NO SEMANTIC LOGIC
   // TODO(HGI): Implement deep semantic intention mapping
   // Reference: /docs/core/hgi-core-v0.2-outline.md (Section XI: MOLIE)
-  void essOutput;
+  void intentOutput;
 
-  const semantic_clusters = await extract_semantic_clusters(essOutput);
+  const semantic_clusters = await extract_semantic_clusters(intentOutput);
 
   const intention_nodes: IntentionNode[] = [
     {
@@ -536,21 +575,21 @@ export async function molie_transform(essOutput: ESSIntent): Promise<MOLIEMap> {
  * Pipeline adapter for entering MOLIE from an unknown upstream payload.
  *
  * This function performs structural validation and normalization only:
- * - Validates the incoming value is an {@link ESSIntent}
+ * - Validates the incoming value is an intent payload
  * - Creates a defensive copy of the intent structure (no semantic changes)
  * - Invokes {@link molie_transform}
  * - Validates the resulting {@link MOLIEMap}
  *
- * @param intent - Unknown upstream value expected to be an {@link ESSIntent}.
+ * @param intent - Unknown upstream value expected to be an intent payload.
  * @returns A validated {@link MOLIEMap}.
  * @throws {MOLIEError} If the input or output fails structural validation.
  */
 export async function molie_pipeline_entry(intent: unknown): Promise<MOLIEMap> {
-  if (!isValidESSIntent(intent)) {
-    throw createMOLIEValidationError('Invalid ESSIntent input for MOLIE pipeline entry.');
+  if (!isValidHGIIntent(intent)) {
+    throw createMOLIEValidationError('Invalid intent input for MOLIE pipeline entry.');
   }
 
-  const normalizedIntent: ESSIntent = {
+  const normalizedIntent: HGIIntent = {
     ...intent,
     emotional_context: {
       ...intent.emotional_context,

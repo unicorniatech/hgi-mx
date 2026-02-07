@@ -52,7 +52,7 @@ TODO: WebRTC, WebSockets fallback, QUIC, UDP Hole Punching.
 TODO: gossip protocol + reputación ética como filtro.
 
 ### 2.4 Ruteo emocional
-TODO: rutas influenciadas por HEV y ESS.
+TODO: rutas influenciadas por HEV y capa afectiva.
 
 ### 2.5 Balanceo ético de carga
 TODO: mitigación cuando un nodo se vuelve tóxico o dominante.

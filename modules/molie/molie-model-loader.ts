@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import type * as ortTypes from 'onnxruntime-node';
 
 import { ONNXRuntimeManager } from '../runtime/onnx-config';
+import { encodeVocabTokens, loadVocabFile } from '../tokenizers/vocab-tokenizer';
 
 export interface Phi3ModelConfig {
   modelPath: string;
@@ -24,56 +25,6 @@ function clamp01(x: number): number {
 function sigmoid(x: number): number {
   if (!Number.isFinite(x)) return 0.5;
   return 1 / (1 + Math.exp(-x));
-}
-
-function basicTokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
-}
-
-async function loadVocab(vocabPath: string): Promise<Map<string, number>> {
-  const content = await fs.readFile(vocabPath, 'utf8');
-  const lines = content.split(/\r?\n/);
-
-  const map = new Map<string, number>();
-  for (let i = 0; i < lines.length; i += 1) {
-    const tok = lines[i]?.trim();
-    if (!tok) continue;
-    if (!map.has(tok)) map.set(tok, map.size);
-  }
-
-  return map;
-}
-
-function encode(text: string, vocab: Map<string, number>, maxLength: number): { inputIds: BigInt64Array; attentionMask: BigInt64Array } {
-  const unkId = vocab.get('[UNK]') ?? 0;
-  const padId = vocab.get('[PAD]') ?? 0;
-
-  const tokens = basicTokenize(text);
-
-  const ids: number[] = [];
-  for (const t of tokens) {
-    ids.push(vocab.get(t) ?? unkId);
-  }
-
-  const trimmed = ids.slice(0, Math.max(1, maxLength));
-
-  const padded = new Array<number>(maxLength).fill(padId);
-  const mask = new Array<number>(maxLength).fill(0);
-
-  for (let i = 0; i < Math.min(trimmed.length, maxLength); i += 1) {
-    padded[i] = trimmed[i];
-    mask[i] = 1;
-  }
-
-  return {
-    inputIds: BigInt64Array.from(padded.map((n) => BigInt(n))),
-    attentionMask: BigInt64Array.from(mask.map((n) => BigInt(n))),
-  };
 }
 
 export class MOLIEPhi3ModelLoader {
@@ -135,7 +86,7 @@ export class MOLIEPhi3ModelLoader {
       if (a === b) return this.session;
     }
 
-    this.vocab = await loadVocab(vocabPath);
+    this.vocab = await loadVocabFile(vocabPath);
 
     const session = await this.ortManager.getSession(modelPath, eps);
     this.session = session;
@@ -151,7 +102,7 @@ export class MOLIEPhi3ModelLoader {
     }
 
     const maxLength = this.sessionKey.maxLength;
-    const { inputIds, attentionMask } = encode(text, this.vocab, maxLength);
+    const { inputIds, attentionMask } = encodeVocabTokens(text, this.vocab, maxLength);
 
     const ort = await import('onnxruntime-node');
 

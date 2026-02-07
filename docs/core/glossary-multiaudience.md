@@ -52,7 +52,7 @@ ENTRADAS DEL GLOSARIO (Solo estructura, sin desarrollo)
 - Fundadores:
 - Conexiones:
 
-## ESS (Emotional Synthesis System)
+## AF (Affective Synthesis Layer)
 - Tarot:
 - Ingeniería:
 - Académica:
